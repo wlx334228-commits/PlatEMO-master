@@ -36,7 +36,7 @@ classdef BLRLEA < ALGORITHM
             hiddenDim = 32;                             %隐藏层
             learnRate = 1e-3;                           %学习率
 
-            %代内训练步数
+            %代内训练步数,,,,,
             
             maxstep = 1;
 
