@@ -188,7 +188,7 @@ fprintf(fid,'Gen\tUpperFE\tTotalLowerFE\tUpperFit\tLowerFit\tlowerGap\n');
             %% Upper-level termination by upper fitness
             upperTol = 1e-6;
 
-            if UpperFit <= upperTol
+            if abs(UpperFit) <= upperTol
                 fprintf('Upper optimum reached: UpperFit = %.6e, UpperFE = %d, TotalLowerFE = %d\n', ...
                     UpperFit, Problem.FE, totalFElower);
                 break;

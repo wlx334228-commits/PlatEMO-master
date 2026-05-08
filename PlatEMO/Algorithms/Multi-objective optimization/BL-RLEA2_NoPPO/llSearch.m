@@ -45,7 +45,7 @@ function [eliteIndiv,totalFElower] = llSearch(Problem,ulPopDec,llPopDec,totalFEl
 
     FElower = length(llPopulation);
     totalFElower = totalFElower + length(llPopulation);
-    lowerTol = 1e-5;
+    lowerTol = 1e-6;
 
     %% Check whether initial lower population already satisfies accuracy
     lowerStopFit = CalLowerStopFitness(Problem,llPopulation);
