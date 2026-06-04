@@ -1,5 +1,5 @@
-function state = BuildPerturbState(Problem,globalState,baseUL,eliteInfo)
-% Add candidate-level features so PPO can perturb each anchor differently.
+function state = BuildPerturbState(Problem,baseUL,eliteInfo)
+% Build per-dimension PPO state for the current perturbation anchor.
 
     DU = Problem.DU;
 
@@ -9,7 +9,8 @@ function state = BuildPerturbState(Problem,globalState,baseUL,eliteInfo)
     range(range < 1e-12) = 1;
 
     xNorm = 2 .* (baseUL - lower) ./ range - 1;
-    zElite = (baseUL - eliteInfo.eliteMean) ./ (eliteInfo.perturbScale + 1e-12);
+    eliteStdNorm = eliteInfo.perturbScale ./ range;
+    eliteStdNorm = min(max(eliteStdNorm,0),1);
 
-    state = [globalState,xNorm,zElite];
+    state = [xNorm,eliteStdNorm];
 end

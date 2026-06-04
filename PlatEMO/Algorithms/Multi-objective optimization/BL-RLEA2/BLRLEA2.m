@@ -5,7 +5,7 @@ classdef BLRLEA2 < ALGORITHM
             %% PPO parameters
             sigma0 = 1;
             ppoRatio = 0.5;
-            stateDim = 6 + 2 * Problem.DU;
+            stateDim = 2 * Problem.DU;
             actionDim = Problem.DU;
             hiddenDim = 32;
             learnRate = 1e-3;
@@ -33,9 +33,6 @@ classdef BLRLEA2 < ALGORITHM
 
             Population = Problem.Evaluation([ulPopDec,llPopDec]);
 
-            % State memory for the next PPO decision
-            stateOldBest = min(CalFitness(Problem.C,Population));
-            noImproveGen = 0;
             upperTol = 1e-5;
             upperReached = false;
 
@@ -53,10 +50,7 @@ classdef BLRLEA2 < ALGORITHM
 
                 OldPopulation = Population;
 
-                %% 1. Build global PPO state
-                globalState = BuildState(Problem,Population,stateOldBest,noImproveGen);
-
-                %% 2. Generate upper-level offspring by elite anchors, PPO perturbation, and SBX+PM
+                %% 1. Generate upper-level offspring by elite anchors, PPO perturbation, and SBX+PM
                 Fitness = CalFitness(Problem.C,Population);
                 Noff = Problem.N;
                 Nppo = floor(ppoRatio * Noff);
@@ -76,7 +70,7 @@ classdef BLRLEA2 < ALGORITHM
 
                 for i = 1 : Nppo
                     statesPPO(i,:) = BuildPerturbState( ...
-                        Problem,globalState,basePPO(i,:),eliteInfo);
+                        Problem,basePPO(i,:),eliteInfo);
                     valuesPPO(i) = CriticForward(Critic,statesPPO(i,:));
                     [actionsPPO(i,:),logProbsPPO(i),actionMeansPPO(i,:),actionStdsPPO(i,:)] = ...
                         ActorForward(Actor,statesPPO(i,:));
@@ -117,11 +111,11 @@ classdef BLRLEA2 < ALGORITHM
                 Offspring = Problem.Evaluation([ulOffDec,llOffDec]);
 
                 %% 6. Environmental selection
-                [Population,ppoSurvivalRate,ppoSurvived] = EnvironmentalSelectionUpper( ...
+                [Population,~,ppoSurvived] = EnvironmentalSelectionUpper( ...
                     Problem,Population,Offspring,Nppo);
 
                 %% 7. PPO reward for each PPO-perturbed offspring
-                [rewardsPPO,rewardStats] = RewardCalculator( ...
+                [rewardsPPO,~] = RewardCalculator( ...
                     Problem,OldPopulation,Offspring,Nppo, ...
                     ppoSurvived,deltaPPO,eliteInfo.perturbScale);
 
@@ -190,16 +184,7 @@ classdef BLRLEA2 < ALGORITHM
 
                 drawnow;
 
-                %% 9. Build generation statistics
-                oldBest = min(CalFitness(Problem.C,OldPopulation));
-
-                if UpperFit < oldBest - 1e-12
-                    nextNoImproveGen = 0;
-                else
-                    nextNoImproveGen = noImproveGen + 1;
-                end
-
-                %% 10. Save one transition per PPO-perturbed offspring
+                %% 9. Save one transition per PPO-perturbed offspring
                 oneBuffer = InitializePPOBuffer();
                 oneBuffer.states       = statesPPO;
                 oneBuffer.actions      = actionsPPO;
@@ -220,17 +205,15 @@ classdef BLRLEA2 < ALGORITHM
                 rolloutBuffer = AppendPPOBuffer(rolloutBuffer,oneBuffer);
                 rolloutGenCount = rolloutGenCount + 1;
 
-                %% 11. PPO update
+                %% 10. PPO update
                 if upperReached || rolloutGenCount >= rolloutUpdateGap
                     [Actor,Critic] = PPOUpdate(Actor,Critic,rolloutBuffer);
                     rolloutBuffer = InitializePPOBuffer();
                     rolloutGenCount = 0;
                 end
 
-                %% 12. Update state memory for next generation
+                %% 11. Update generation counter
                 gen = gen + 1;
-                stateOldBest = oldBest;
-                noImproveGen = nextNoImproveGen;
             end
 
             if rolloutGenCount > 0 && ~isempty(rolloutBuffer.states)
