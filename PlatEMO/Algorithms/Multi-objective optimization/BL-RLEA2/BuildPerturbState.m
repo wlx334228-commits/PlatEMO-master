@@ -11,8 +11,5 @@ function state = BuildPerturbState(Problem,globalState,baseUL,eliteInfo)
     xNorm = 2 .* (baseUL - lower) ./ range - 1;
     zElite = (baseUL - eliteInfo.eliteMean) ./ (eliteInfo.perturbScale + 1e-12);
 
-    distElite = norm(zElite) / sqrt(DU);
-    meanScale = mean(eliteInfo.perturbScale ./ range);
-
-    state = [globalState,xNorm,zElite,distElite,meanScale];
+    state = [globalState,xNorm,zElite];
 end

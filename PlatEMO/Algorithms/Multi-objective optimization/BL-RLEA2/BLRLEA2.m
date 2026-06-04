@@ -5,7 +5,7 @@ classdef BLRLEA2 < ALGORITHM
             %% PPO parameters
             sigma0 = 1;
             ppoRatio = 0.5;
-            stateDim = 10 + 2 * Problem.DU + 2;
+            stateDim = 6 + 2 * Problem.DU;
             actionDim = Problem.DU;
             hiddenDim = 32;
             learnRate = 1e-3;
@@ -36,9 +36,6 @@ classdef BLRLEA2 < ALGORITHM
             % State memory for the next PPO decision
             stateOldBest = min(CalFitness(Problem.C,Population));
             noImproveGen = 0;
-            prevPPOBetterRate = 0;
-            prevPPOSurvivalRate = 0;
-            prevMeanSigma = 0;
             upperTol = 1e-5;
             upperReached = false;
 
@@ -57,8 +54,7 @@ classdef BLRLEA2 < ALGORITHM
                 OldPopulation = Population;
 
                 %% 1. Build global PPO state
-                globalState = BuildState(Problem,Population,stateOldBest,noImproveGen, ...
-                    prevPPOBetterRate,prevPPOSurvivalRate,prevMeanSigma);
+                globalState = BuildState(Problem,Population,stateOldBest,noImproveGen);
 
                 %% 2. Generate upper-level offspring by elite anchors, PPO perturbation, and SBX+PM
                 Fitness = CalFitness(Problem.C,Population);
@@ -196,7 +192,6 @@ classdef BLRLEA2 < ALGORITHM
 
                 %% 9. Build generation statistics
                 oldBest = min(CalFitness(Problem.C,OldPopulation));
-                meanSigma = mean(eliteInfo.perturbScale);
 
                 if UpperFit < oldBest - 1e-12
                     nextNoImproveGen = 0;
@@ -236,9 +231,6 @@ classdef BLRLEA2 < ALGORITHM
                 gen = gen + 1;
                 stateOldBest = oldBest;
                 noImproveGen = nextNoImproveGen;
-                prevPPOBetterRate = rewardStats.betterRate;
-                prevPPOSurvivalRate = ppoSurvivalRate;
-                prevMeanSigma = meanSigma;
             end
 
             if rolloutGenCount > 0 && ~isempty(rolloutBuffer.states)
