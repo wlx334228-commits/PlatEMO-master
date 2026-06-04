@@ -1,5 +1,19 @@
-#忽略的文件格式
+# MATLAB editor and temporary files
 *.asv
+*.m~
+*.autosave
+*.tmp
+*.log
 
-# 忽略的文件夹
-Data/*
+# PlatEMO runtime outputs
+PlatEMO/Data/
+PlatEMO/*_Diagnostics/
+PlatEMO/*_debug_log.txt
+PlatEMO/**/*.tsv
+PlatEMO/**/*_run_fe.tsv
+PlatEMO/**/*_diagnostic*.tsv
+PlatEMO/**/*_summary.tsv
+
+# Local OS/editor noise
+.DS_Store
+Thumbs.db
