@@ -4,7 +4,7 @@ classdef BLRLEA2 < ALGORITHM
         function main(Algorithm,Problem)
             %% PPO parameters
             sigma0 = 1;
-            ppoRatio = 0.5;
+            ppoRatio = 0.25;
             stateDim = 2 * Problem.DU;
             actionDim = Problem.DU;
             hiddenDim = 32;
@@ -48,16 +48,15 @@ classdef BLRLEA2 < ALGORITHM
                     break;
                 end
 
-                OldPopulation = Population;
-
                 %% 1. Generate upper-level offspring by elite anchors, PPO perturbation, and SBX+PM
                 Fitness = CalFitness(Problem.C,Population);
                 Noff = Problem.N;
-                Nppo = floor(ppoRatio * Noff);
-                Nea  = Noff - Nppo;
+                Nbase = floor(ppoRatio * Noff);
+                Nppo  = Nbase;
+                Nea   = Noff - Nbase - Nppo;
 
                 [ThetaBase,eliteInfo] = BuildEliteTheta(Problem,Population,sigma0);
-                basePPO = GenerateUpperOffspring(ThetaBase,Problem,Nppo);
+                basePPO = GenerateUpperOffspring(ThetaBase,Problem,Nbase);
 
                 statesPPO      = zeros(Nppo,stateDim);
                 actionsPPO     = zeros(Nppo,actionDim);
@@ -83,15 +82,19 @@ classdef BLRLEA2 < ALGORITHM
                 upperUL = repmat(Problem.upper(1:Problem.DU),Nppo,1);
                 ulPPO = min(max(ulPPO,lowerUL),upperUL);
 
-                MatingPool = TournamentSelection(2,Nea,Fitness);
-                ParentDec  = Population(MatingPool).decs;
-                ulEA = OperatorSBXPM( ...
-                    ParentDec(:,1:Problem.DU), ...
-                    Problem.lower(1:Problem.DU), ...
-                    Problem.upper(1:Problem.DU));
+                if Nea > 0
+                    MatingPool = TournamentSelection(2,Nea,Fitness);
+                    ParentDec  = Population(MatingPool).decs;
+                    ulEA = OperatorSBXPM( ...
+                        ParentDec(:,1:Problem.DU), ...
+                        Problem.lower(1:Problem.DU), ...
+                        Problem.upper(1:Problem.DU));
+                else
+                    ulEA = zeros(0,Problem.DU);
+                end
 
-                % PPO offspring must stay at the front for reward slicing
-                ulOffDec = [ulPPO;ulEA];
+                % Offspring order: base anchors, same anchors with PPO perturbations, EA offspring.
+                ulOffDec = [basePPO;ulPPO;ulEA];
 
                 %% 4. Warm-start lower-level search
                 AllDec = Population.decs;
@@ -111,13 +114,12 @@ classdef BLRLEA2 < ALGORITHM
                 Offspring = Problem.Evaluation([ulOffDec,llOffDec]);
 
                 %% 6. Environmental selection
-                [Population,~,ppoSurvived] = EnvironmentalSelectionUpper( ...
-                    Problem,Population,Offspring,Nppo);
+                [Population,~,~] = EnvironmentalSelectionUpper( ...
+                    Problem,Population,Offspring,Nbase,Nppo);
 
-                %% 7. PPO reward for each PPO-perturbed offspring
+                %% 7. Paired PPO reward: same elite sample with and without perturbation
                 [rewardsPPO,~] = RewardCalculator( ...
-                    Problem,OldPopulation,Offspring,Nppo, ...
-                    ppoSurvived,deltaPPO,eliteInfo.perturbScale);
+                    Problem,Offspring,Nbase,Nppo,deltaPPO,eliteInfo.perturbScale);
 
                 %% 8. Record best upper and lower information
                 Fitness = CalFitness(Problem.C,Population);
