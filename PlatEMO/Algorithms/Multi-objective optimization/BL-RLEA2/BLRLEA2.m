@@ -65,7 +65,12 @@ classdef BLRLEA2 < ALGORITHM
                 actionMeansPPO = zeros(Nppo,actionDim);
                 actionStdsPPO  = zeros(Nppo,actionDim);
                 deltaPPO       = zeros(Nppo,actionDim);
+                perturbScalePPO = zeros(Nppo,actionDim);
                 ulPPO          = zeros(Nppo,Problem.DU);
+                rangeUL = Problem.upper(1:Problem.DU) - Problem.lower(1:Problem.DU);
+                rangeUL(rangeUL < 1e-12) = 1;
+                minLocalScale = max(1e-5 .* rangeUL,1e-8);
+                valueScaleRatio = 0.5;
 
                 for i = 1 : Nppo
                     statesPPO(i,:) = BuildPerturbState( ...
@@ -74,7 +79,10 @@ classdef BLRLEA2 < ALGORITHM
                     [actionsPPO(i,:),logProbsPPO(i),actionMeansPPO(i,:),actionStdsPPO(i,:)] = ...
                         ActorForward(Actor,statesPPO(i,:));
 
-                    deltaPPO(i,:) = perturbEta .* tanh(actionsPPO(i,:)) .* eliteInfo.perturbScale;
+                    valueScale = max(abs(basePPO(i,:)),minLocalScale);
+                    perturbScalePPO(i,:) = min(eliteInfo.perturbScale,valueScaleRatio .* valueScale);
+                    perturbScalePPO(i,:) = max(perturbScalePPO(i,:),minLocalScale);
+                    deltaPPO(i,:) = perturbEta .* tanh(actionsPPO(i,:)) .* perturbScalePPO(i,:);
                     ulPPO(i,:) = basePPO(i,:) + deltaPPO(i,:);
                 end
 
@@ -119,7 +127,7 @@ classdef BLRLEA2 < ALGORITHM
 
                 %% 7. Paired PPO reward: same elite sample with and without perturbation
                 [rewardsPPO,~] = RewardCalculator( ...
-                    Problem,Offspring,Nbase,Nppo,deltaPPO,eliteInfo.perturbScale);
+                    Problem,Offspring,Nbase,Nppo,deltaPPO,perturbScalePPO);
 
                 %% 8. Record best upper and lower information
                 Fitness = CalFitness(Problem.C,Population);

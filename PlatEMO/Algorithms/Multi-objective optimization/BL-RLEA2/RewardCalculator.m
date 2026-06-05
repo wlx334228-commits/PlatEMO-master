@@ -24,8 +24,12 @@ function [rewards,stats] = RewardCalculator( ...
         perturbScale = ones(1,Problem.DU);
     end
 
-    perturbScale = perturbScale(:)';
-    scaleMat = repmat(perturbScale,pairN,1);
+    if isvector(perturbScale)
+        perturbScale = perturbScale(:)';
+        scaleMat = repmat(perturbScale,pairN,1);
+    else
+        scaleMat = perturbScale(1:pairN,:);
+    end
     stepSize = mean(abs(deltaPPO ./ (scaleMat + 1e-12)),2);
 
     relImprove = (baseFit - ppoFit) ./ (abs(baseFit) + 1e-8);
