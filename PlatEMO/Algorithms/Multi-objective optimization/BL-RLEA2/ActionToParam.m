@@ -12,7 +12,7 @@ function Theta = ActionToParam(action,Problem,Population,sigma0)
 
     [~,rank] = sort(fitness,'ascend');
 
-    eliteNum = max(2,ceil(0.2*N));
+    eliteNum = max(2,ceil(0.5*N));
     elitePop = ulPop(rank(1:eliteNum),:);
 
     eliteMean = mean(elitePop,1);
