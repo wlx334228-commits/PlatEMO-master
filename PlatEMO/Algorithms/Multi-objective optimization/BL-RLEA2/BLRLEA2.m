@@ -9,7 +9,7 @@ classdef BLRLEA2 < ALGORITHM
             actionDim = Problem.DU;
             hiddenDim = 32;
             learnRate = 1e-3;
-            perturbEta = 0.3;
+            perturbEta = 0.2;
 
             rolloutUpdateGap = 3;
             rolloutGenCount  = 0;
