@@ -1,4 +1,4 @@
-function CMA = UpdateCMAES(CMA,Step,Dec,Fitness)
+function CMA = UpdateCMAES(CMA,Dec,Fitness)
 % Update CMA-ES parameters from evaluated candidate solutions.
 
     if isempty(Dec)
@@ -12,36 +12,33 @@ function CMA = UpdateCMAES(CMA,Step,Dec,Fitness)
     weights = weights ./ sum(weights);
     mueff = 1 / sum(weights.^2);
 
-    selectedDec = Dec(rank(1:useMu),:);
-    selectedStep = Step(rank(1:useMu),:);
-
     xold = CMA.xmean;
-    xnew = weights * selectedDec;
+    X = Dec(rank(1:useMu),:);
+    Y = (X - repmat(xold,useMu,1)) ./ max(CMA.sigma,1e-12);
+    mahalanobis = sqrt(sum((Y*CMA.invsqrtC').^2,2));
+    scale = min(1,CMA.cy./max(mahalanobis,1e-12));
+    Y = Y .* repmat(scale,1,CMA.dim);
+    meanStep = weights * Y;
+
+    xnew = xold + meanStep * CMA.sigma;
     xnew = RepairBounds(xnew,CMA.lower,CMA.upper);
 
-    safeSigma = CMA.sigma;
-    safeSigma(safeSigma < 1e-12) = 1e-12;
-    meanStep = (xnew - xold) ./ safeSigma;
-
-    cholC = SafeChol(CMA.C);
     CMA.ps = (1-CMA.cs)*CMA.ps + ...
-        sqrt(CMA.cs*(2-CMA.cs)*mueff) * (meanStep / cholC');
+        sqrt(CMA.cs*(2-CMA.cs)*mueff) * meanStep * CMA.invsqrtC;
 
-    sigmaScale = exp(CMA.cs/CMA.ds*(norm(CMA.ps)/CMA.ENN-1))^0.3;
-    CMA.sigma = min(max(CMA.sigma .* sigmaScale,CMA.minSigma),CMA.maxSigma);
+    deltaSigma = (CMA.cs/CMA.ds)*(norm(CMA.ps)/CMA.ENN-1);
+    CMA.sigma = CMA.sigma * exp(min(deltaSigma,CMA.deltaSigmaMax));
+    CMA.sigma = min(max(CMA.sigma,CMA.minSigma),CMA.maxSigma);
 
     CMA.iter = CMA.iter + 1;
     hsig = norm(CMA.ps)/sqrt(1-(1-CMA.cs)^(2*CMA.iter)) < CMA.hth;
-    delta = (1-hsig)*CMA.cc*(2-CMA.cc);
     CMA.pc = (1-CMA.cc)*CMA.pc + ...
         hsig*sqrt(CMA.cc*(2-CMA.cc)*mueff)*meanStep;
 
+    Cmu = Y' * diag(weights) * Y;
     CMA.C = (1-CMA.c1-CMA.cmu)*CMA.C + ...
-        CMA.c1*(CMA.pc'*CMA.pc + delta*CMA.C);
-    for i = 1 : useMu
-        CMA.C = CMA.C + CMA.cmu*weights(i)*(selectedStep(i,:)'*selectedStep(i,:));
-    end
-
-    CMA.C = RepairCovariance(CMA.C);
+        CMA.c1*(CMA.pc'*CMA.pc) + CMA.cmu*Cmu;
+    CMA.C = triu(CMA.C) + triu(CMA.C,1)';
     CMA.xmean = xnew;
+    CMA = RepairCMAES(CMA);
 end

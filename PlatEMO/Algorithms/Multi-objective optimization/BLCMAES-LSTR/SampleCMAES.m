@@ -5,9 +5,8 @@ function [Dec,Step] = SampleCMAES(CMA,N)
         N = CMA.lambda;
     end
 
-    cholC = SafeChol(CMA.C);
-    Step = randn(N,CMA.D) * cholC;
-    Dec = repmat(CMA.xmean,N,1) + Step .* repmat(CMA.sigma,N,1);
-    Dec = RepairBounds(Dec,CMA.lower,CMA.upper);
+    Step = (randn(N,CMA.dim) .* repmat(CMA.eigD,N,1)) * CMA.B';
+    Dec = repmat(CMA.xmean,N,1) + CMA.sigma .* Step;
+    Dec = RepairBoundsToMean(Dec,CMA.xmean,CMA.lower,CMA.upper);
     Step = CMAESStepsFromDec(CMA,Dec);
 end

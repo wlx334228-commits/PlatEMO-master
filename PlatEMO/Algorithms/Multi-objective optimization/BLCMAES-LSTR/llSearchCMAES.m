@@ -1,130 +1,86 @@
-function [eliteIndiv,totalFElower] = llSearchCMAES(Problem,ulPopDec,llPopDec,totalFElower)
-% Obtain the lower-level response by a basic CMA-ES search.
+function [eliteIndiv,totalFElower] = llSearchCMAES(Problem,ulPopDec,globalCMA,totalFElower)
+% Obtain the lower-level response by CMA-ES from the global lower marginal.
 
     lower = Problem.lower(Problem.DU+1:end);
     upper = Problem.upper(Problem.DU+1:end);
-    lambda = Problem.N;
-    lowerTol = 1e-5;
+    lowerTol = 1e-6;
+    sigma0 = 1;
+    lowerCMA = InitializeLowerCMAESFromGlobal(Problem,globalCMA);
 
-    if isempty(llPopDec)
-        xmean = unifrnd(lower,upper);
-    else
-        xmean = min(max(llPopDec(1,:),lower),upper);
-    end
+    bestIndiv = [];
+    maxIter = ceil(Problem.maxFElower / lowerCMA.lambda);
+    imprIter = max(2,ceil(0.2 * maxIter));
+    record = nan(1,maxIter);
 
-    lowerCMA = InitializeCMAES(Problem.DL,lower,upper,lambda,xmean);
-
-    initDec = xmean;
-    if lambda > 1
-        initDec = [initDec;unifrnd(repmat(lower,lambda-1,1),repmat(upper,lambda-1,1))];
-    end
-    llPopulation = Problem.EvaluationLower([repmat(ulPopDec,size(initDec,1),1),initDec]);
-
-    FElower = length(llPopulation);
-    totalFElower = totalFElower + length(llPopulation);
-    lowerStopFit = CalLowerStopFitness(Problem,llPopulation);
-    bestLowerStopFit = min(lowerStopFit);
-
-    while FElower < Problem.maxFElower && bestLowerStopFit > lowerTol
-        batchSize = min(lambda,Problem.maxFElower-FElower);
+    FElower = 0;
+    for iter = 1 : maxIter
+        batchSize = min(lowerCMA.lambda,Problem.maxFElower-FElower);
         if batchSize <= 0
             break;
         end
 
-        [llOffDec,llSteps] = SampleCMAES(lowerCMA,batchSize);
+        [llOffDec,~] = SampleCMAES(lowerCMA,batchSize);
         llOffspring = Problem.EvaluationLower([repmat(ulPopDec,batchSize,1),llOffDec]);
 
         FElower = FElower + length(llOffspring);
         totalFElower = totalFElower + length(llOffspring);
 
-        lowerCMA = UpdateCMAES(lowerCMA,llSteps,llOffDec,CalFitness(Problem.C,llOffspring));
+        lowerCMA = UpdateCMAES(lowerCMA,llOffDec,CalFitness(Problem.C,llOffspring));
 
-        llPopulation = SelectBestPopulation(Problem,[llPopulation,llOffspring],lambda);
-        lowerStopFit = CalLowerStopFitness(Problem,llPopulation);
-        bestLowerStopFit = min(lowerStopFit);
-    end
+        bestIndiv = UpdateBestLowerIndiv(Problem,bestIndiv,llOffspring);
+        record(iter) = CalLowerFitnessValue(Problem,bestIndiv);
 
-    lowerStopFit = CalLowerStopFitness(Problem,llPopulation);
-    if all(isinf(lowerStopFit))
-        [~,best] = min(CalFitness(Problem.C,llPopulation));
-    else
-        [~,best] = min(lowerStopFit);
-    end
-    eliteIndiv = llPopulation(best).dec(Problem.DU+1:end);
-end
-
-function Population = SelectBestPopulation(Problem,Population,N)
-    [~,rank] = sort(CalFitness(Problem.C,Population),'ascend');
-    Population = Population(rank(1:min(N,length(rank))));
-end
-
-function lowerStopFit = CalLowerStopFitness(Problem,llPopulation)
-    PopDec = llPopulation.decs;
-    PopObj = llPopulation.objs;
-    PopCon = llPopulation.cons;
-
-    N = size(PopDec,1);
-    lowerGap = nan(N,1);
-
-    for i = 1 : N
-        lowerGap(i) = CalLowerGap(Problem,PopDec(i,:),PopObj(i,:));
-    end
-
-    if isempty(PopCon)
-        LLCV = zeros(N,1);
-    else
-        if size(PopCon,2) >= Problem.C + 1
-            llCon = PopCon(:,Problem.C+1:end);
-        else
-            llCon = [];
+        reachFlatRatio = false;
+        reachFlatValue = false;
+        if iter > imprIter
+            oldFit = record(iter-imprIter+1);
+            curFit = record(iter);
+            denom = abs(record(1)) + abs(curFit) + eps;
+            reachFlatRatio = abs(curFit-oldFit) / denom < 1e-4;
+            reachFlatValue = abs(curFit-oldFit) < 10 * lowerTol;
         end
 
-        if isempty(llCon)
-            LLCV = zeros(N,1);
-        else
-            LLCV = sum(max(0,llCon),2);
+        if (reachFlatRatio && reachFlatValue) || ...
+                lowerCMA.sigma / sigma0 < 1e-2 || ...
+                lowerCMA.sigma / sigma0 > 1e2
+            break;
         end
     end
 
-    unknown = isnan(lowerGap);
-    lowerGap(unknown) = inf;
-
-    feasible = LLCV <= 0;
-    lowerStopFit = feasible.*lowerGap + ~feasible.*(LLCV + 1e10);
+    if isempty(bestIndiv)
+        eliteIndiv = lowerCMA.xmean;
+    else
+        eliteIndiv = bestIndiv.dec(Problem.DU+1:end);
+    end
 end
 
-function lowerGap = CalLowerGap(Problem,Dec,Obj)
-    problemName = class(Problem);
+function fit = CalLowerFitnessValue(Problem,Population)
+    fit = min(CalFitness(Problem.C,Population));
+end
 
-    if length(Obj) < 2
-        lowerGap = nan;
-        return;
+function lowerCMA = InitializeLowerCMAESFromGlobal(Problem,globalCMA)
+    lower = Problem.lower(Problem.DU+1:end);
+    upper = Problem.upper(Problem.DU+1:end);
+    lambda = 4 + floor(3*log(max(Problem.DL,1)));
+    xmean = globalCMA.xmean(Problem.DU+1:end);
+
+    lowerCMA = InitializeCMAES(Problem.DL,lower,upper,lambda,xmean);
+    lowerBlock = Problem.DU+1 : Problem.D;
+    lowerCMA.sigma = 1;
+    lowerCMA.minSigma = 1e-10;
+    lowerCMA.maxSigma = 1e2;
+    lowerCMA.C = globalCMA.C(lowerBlock,lowerBlock) * globalCMA.sigma^2;
+    lowerCMA.pc = globalCMA.pc(lowerBlock) * globalCMA.sigma;
+    lowerCMA.ps = zeros(1,Problem.DL);
+    lowerCMA = RepairCMAES(lowerCMA);
+end
+
+function bestIndiv = UpdateBestLowerIndiv(Problem,bestIndiv,llOffspring)
+    if isempty(bestIndiv)
+        pool = llOffspring;
+    else
+        pool = [bestIndiv,llOffspring];
     end
-
-    FL = Obj(2);
-
-    if ~isprop(Problem,'p') || ~isprop(Problem,'r') || ~isprop(Problem,'q')
-        lowerGap = nan;
-        return;
-    end
-
-    xu1 = Dec(1:Problem.p);
-
-    switch problemName
-        case {'SMD1','SMD2','SMD3','SMD4','SMD5','SMD6'}
-            FLstar = sum(xu1.^2,2);
-        case 'SMD7'
-            FLstar = sum(xu1.^3,2);
-        case 'SMD8'
-            FLstar = sum(abs(xu1),2);
-        case {'SMD9','SMD10'}
-            FLstar = sum(xu1.^2,2);
-        case {'SMD11','SMD12'}
-            FLstar = sum(xu1.^2,2) + 1;
-        otherwise
-            lowerGap = nan;
-            return;
-    end
-
-    lowerGap = abs(FL - FLstar);
+    [~,best] = min(CalFitness(Problem.C,pool));
+    bestIndiv = pool(best);
 end

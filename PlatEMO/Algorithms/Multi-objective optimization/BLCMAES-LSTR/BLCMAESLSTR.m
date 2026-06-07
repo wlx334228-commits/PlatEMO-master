@@ -1,10 +1,10 @@
 classdef BLCMAESLSTR < ALGORITHM
     % <2024> <multi> <real> <constrained/none> <bilevel>
-    % Bilevel CMA-ES with local successful transition reuse.
+    % Global bilevel CMA-ES with local successful transition reuse.
     methods
         function main(Algorithm,Problem)
             %% Parameters
-            upperTol        = 1e-5;
+            upperTol        = 1e-6;
             archiveMaxSize  = 10 * Problem.N;
             neighborK       = 5;
             reuseThreshold  = 0.25 * sqrt(Problem.DU);
@@ -14,25 +14,20 @@ classdef BLCMAESLSTR < ALGORITHM
             %% Total lower-level function evaluations
             totalFElower = 0;
 
-            %% Generate random upper population
-            ulPopDec = unifrnd( ...
-                repmat(Problem.lower(1:Problem.DU),Problem.N,1), ...
-                repmat(Problem.upper(1:Problem.DU),Problem.N,1));
+            %% Initialize global CMA-ES over both upper and lower variables
+            globalCMA = InitializeCMAES(Problem.D,Problem.lower,Problem.upper,[],[]);
+            Archive = InitializeTransitionArchive(Problem,archiveMaxSize);
 
-            llPopDec = zeros(Problem.N,Problem.DL);
+            %% Generate initial upper population from global CMA-ES
+            initN = min(globalCMA.lambda,Problem.maxFE);
+            [initDec,~] = SampleCMAES(globalCMA,initN);
+            ulPopDec = initDec(:,1:Problem.DU);
+            llPopDec = zeros(size(ulPopDec,1),Problem.DL);
             for i = 1 : size(ulPopDec,1)
-                [llPopDec(i,:),totalFElower] = llSearchCMAES(Problem,ulPopDec(i,:),[],totalFElower);
+                [llPopDec(i,:),totalFElower] = llSearchCMAES(Problem,ulPopDec(i,:),globalCMA,totalFElower);
             end
 
             Population = Problem.Evaluation([ulPopDec,llPopDec]);
-            Archive = InitializeTransitionArchive(Problem,archiveMaxSize);
-
-            upperCMA = InitializeCMAES( ...
-                Problem.DU, ...
-                Problem.lower(1:Problem.DU), ...
-                Problem.upper(1:Problem.DU), ...
-                Problem.N, ...
-                GetUpperCMAInitialMean(Problem,Population));
 
             upperReached = false;
             gen = 1;
@@ -55,27 +50,28 @@ classdef BLCMAESLSTR < ALGORITHM
 
                 OldPopulation = Population;
 
-                %% 1. Generate upper-level offspring by CMA-ES and LSTR
-                [ulBase,~] = SampleCMAES(upperCMA,Problem.N);
+                %% 1. Generate upper-level offspring by global CMA-ES and LSTR
+                remainingUpperFE = Problem.maxFE - Problem.FE;
+                if remainingUpperFE <= 0
+                    break;
+                end
+                offspringN = min(globalCMA.lambda,remainingUpperFE);
+                [baseDec,~] = SampleCMAES(globalCMA,offspringN);
+                ulBase = baseDec(:,1:Problem.DU);
 
                 params.neighborK = neighborK;
                 params.reuseThreshold = reuseThreshold;
                 params.directionNoise = directionNoise;
                 params.maxStepRatio = maxStepRatio;
                 ulOffDec = GenerateLSTROffspring(ulBase,Archive,Problem,params);
-                upperSteps = CMAESStepsFromDec(upperCMA,ulOffDec);
 
-                %% 2. Warm-start lower-level CMA-ES from nearest current population member
-                AllDec = Population.decs;
-                AllUL = AllDec(:,1:Problem.DU);
-                [~,closest] = min(pdist2(ulOffDec,AllUL),[],2);
-
+                %% 2. Search lower-level responses by lower marginal CMA-ES
                 llOffDec = zeros(size(ulOffDec,1),Problem.DL);
                 for i = 1 : size(ulOffDec,1)
                     [llOffDec(i,:),totalFElower] = llSearchCMAES( ...
                         Problem, ...
                         ulOffDec(i,:), ...
-                        AllDec(closest(i),Problem.DU+1:end), ...
+                        globalCMA, ...
                         totalFElower);
                 end
 
@@ -83,11 +79,11 @@ classdef BLCMAESLSTR < ALGORITHM
                 Offspring = Problem.Evaluation([ulOffDec,llOffDec]);
                 Archive = UpdateTransitionArchive(Problem,Archive,OldPopulation,Offspring);
 
-                %% 4. Update upper-level CMA-ES from evaluated offspring
-                upperCMA = UpdateCMAES(upperCMA,upperSteps,ulOffDec,CalFitness(Problem.C,Offspring));
-
-                %% 5. Upper-level environmental selection
+                %% 4. Upper-level environmental selection
                 Population = EnvironmentalSelectionUpper(Problem,Population,Offspring);
+
+                %% 5. Update global CMA-ES from selected parent-offspring elites
+                globalCMA = UpdateCMAES(globalCMA,Population.decs,CalFitness(Problem.C,Population));
 
                 %% 6. Record best upper/lower information
                 Fitness = CalFitness(Problem.C,Population);
@@ -101,7 +97,7 @@ classdef BLCMAESLSTR < ALGORITHM
                 fprintf(['BLCMAESLSTR Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | ', ...
                     'UpperFit=%.6e | LowerFit=%.6e | lowerGap=%.6e | Archive=%d | Sigma=%.3e\n'], ...
                     gen,Problem.FE,totalFElower,UpperFit,LowerFit,lowerGap, ...
-                    size(Archive.X0,1),mean(upperCMA.sigma));
+                    size(Archive.X0,1),globalCMA.sigma);
 
                 if abs(UpperFit) <= upperTol
                     upperReached = true;
@@ -122,15 +118,6 @@ classdef BLCMAESLSTR < ALGORITHM
             end
         end
     end
-end
-
-function xmean = GetUpperCMAInitialMean(Problem,Population)
-    PopDec = Population.decs;
-    ulPop = PopDec(:,1:Problem.DU);
-    fitness = CalFitness(Problem.C,Population);
-    [~,rank] = sort(fitness,'ascend');
-    eliteNum = max(2,ceil(0.5*size(ulPop,1)));
-    xmean = mean(ulPop(rank(1:eliteNum),:),1);
 end
 
 function [LowerFit,lowerGap] = CalOneLowerFitness(Problem,Dec,Obj,Con)
