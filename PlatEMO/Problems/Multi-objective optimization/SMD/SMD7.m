@@ -48,7 +48,7 @@ classdef SMD7 < PROBLEM
             xl1 = PopDec(:,obj.p+obj.r+1:obj.p+obj.r+obj.q); 
             xl2 = PopDec(:,obj.p+obj.r+obj.q+1:end);
             % Upper level function value
-            PopObj(:,1) = 1 + 1/400*sum(xu1.^2,2) - prod(cos(xu1./sqrt(1:obj.p))) - sum(xl1.^2,2) + sum(xu2.^2,2) - sum((xu2-log(xl2)).^2,2);
+            PopObj(:,1) = 1 + 1/400*sum(xu1.^2,2) - prod(cos(xu1./sqrt(1:obj.p)),2) - sum(xl1.^2,2) + sum(xu2.^2,2) - sum((xu2-log(xl2)).^2,2);
             % Lower level function value
             PopObj(:,2) = sum(xu1.^3,2) + sum(xl1.^2,2) + sum((xu2-log(xl2)).^2,2);
         end

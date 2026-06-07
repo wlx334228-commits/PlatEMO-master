@@ -59,9 +59,9 @@ classdef SMD9 < PROBLEM
             xl1 = PopDec(:,obj.p+obj.r+1:obj.p+obj.r+obj.q); 
             xl2 = PopDec(:,obj.p+obj.r+obj.q+1:end);
             % Upper level constraint violation
-            PopCon(:,1) = -sum(xu1.^2,2) + sum(xu2.^2,2) + floor(sum(xu1.^2,2)+sum(xu2.^2,2)+0.5); 
+            PopCon(:,1) = -sum(xu1.^2,2) - sum(xu2.^2,2) + floor(sum(xu1.^2,2)+sum(xu2.^2,2)+0.5); 
             % Lower level constraint violation
-            PopCon(:,2) = -sum(xl1.^2,2) + sum(xl2.^2,2) + floor(sum(xl1.^2,2)+sum(xl2.^2,2)+0.5);
+            PopCon(:,2) = -sum(xl1.^2,2) - sum(xl2.^2,2) + floor(sum(xl1.^2,2)+sum(xl2.^2,2)+0.5);
         end
         %% Calculate lower level objective values
         function llPopulation = EvaluationLower(obj,varargin)
