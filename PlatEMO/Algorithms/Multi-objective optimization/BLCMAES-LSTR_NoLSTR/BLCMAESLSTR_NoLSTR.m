@@ -82,13 +82,18 @@ classdef BLCMAESLSTR_NoLSTR < ALGORITHM
                     [lowerFit,lowerGap] = CalOneLowerFitness(Problem,elite);
                     targetBest = isfinite(BI.u_fopt) && abs(bestIndv.UF - BI.u_fopt) < BI.u_ftol;
                     targetElite = isfinite(BI.u_fopt) && abs(elite.UF - BI.u_fopt) < BI.u_ftol;
+                    upperAcc = abs(elite.UF - BI.u_fopt);
+                    lowerAcc = abs(lowerFit - BI.l_fopt);
                     reachMaxFEs = Problem.FE >= BI.UmaxFEs;
                     reachFlat = HasRecentObjectiveRangeBelowTol(recordUFE,recordUF,BI.UmaxImprFEs,BI.u_ftol,imprIter);
                     upperReached = targetBest || targetElite;
 
                     fprintf(['BL-CMA-ES Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | ', ...
-                        'UpperFit=%.6e | LowerFit=%.6e | lowerGap=%.6e | RF=%d | Sigma=%.3e\n'], ...
-                        iter,Problem.FE,totalFElower,elite.UF,lowerFit,lowerGap,elite.RF,CMA.sigma);
+                        'UpperFit=%.6e | UpperOpt=%.6e | UAcc=%.6e | ', ...
+                        'LowerFit=%.6e | LowerOpt=%.6e | LAcc=%.6e | ', ...
+                        'lowerGap=%.6e | RF=%d | Sigma=%.3e\n'], ...
+                        iter,Problem.FE,totalFElower,elite.UF,BI.u_fopt,upperAcc, ...
+                        lowerFit,BI.l_fopt,lowerAcc,lowerGap,elite.RF,CMA.sigma);
 
                     displayPopulation = [POP.Solution];
                     nofinish = Algorithm.NotTerminated(displayPopulation);
