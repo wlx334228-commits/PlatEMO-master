@@ -4,12 +4,12 @@ classdef BLCMAESLSTR < ALGORITHM
     methods
         function main(Algorithm,Problem)
             %% Parameters
-            [uTol,lTol,uImprFEs,lImprFEs,includeLLConInUpper,archiveScale, ...
+            [uTol,lTol,~,~,includeLLConInUpper,archiveScale, ...
                 neighborK,reuseThreshold,directionNoise,maxStepRatio] = ...
-                Algorithm.ParameterSet(1e-6,1e-6,50,50,0,10,5, ...
+                Algorithm.ParameterSet(1e-6,1e-6,350,25,0,10,5, ...
                 0.25*sqrt(Problem.DU),0.20,0.20);
 
-            BI = BuildBI(Problem,uTol,lTol,uImprFEs,lImprFEs,includeLLConInUpper);
+            BI = BuildBI(Problem,uTol,lTol,includeLLConInUpper);
             CMA = InitCMAES(BI);
             Archive = InitializeTransitionArchive(Problem,max(1,round(archiveScale*Problem.N)));
             lstrParams.neighborK = neighborK;
@@ -23,6 +23,7 @@ classdef BLCMAESLSTR < ALGORITHM
             elite = [];
             previousPopulation = [];
             recordUF = [];
+            recordUFE = [];
             totalFElower = 0;
             upperReached = false;
             runRecordWritten = false;
@@ -97,19 +98,14 @@ classdef BLCMAESLSTR < ALGORITHM
                     elite.UFEs = Problem.FE;
                     elite.LFEs = totalFElower;
                     recordUF(end+1) = elite.UF; %#ok<AGROW>
+                    recordUFE(end+1) = Problem.FE; %#ok<AGROW>
 
                     %% Termination check
                     [lowerFit,lowerGap] = CalOneLowerFitness(Problem,elite);
-                    targetBest = abs(bestIndv.UF - BI.u_fopt) < BI.u_ftol;
-                    targetElite = abs(elite.UF - BI.u_fopt) < BI.u_ftol;
+                    targetBest = isfinite(BI.u_fopt) && abs(bestIndv.UF - BI.u_fopt) < BI.u_ftol;
+                    targetElite = isfinite(BI.u_fopt) && abs(elite.UF - BI.u_fopt) < BI.u_ftol;
                     reachMaxFEs = Problem.FE >= BI.UmaxFEs;
-                    reachFlat = false;
-                    if iter > imprIter
-                        oldUF = recordUF(iter-imprIter+1);
-                        curUF = recordUF(iter);
-                        reachFlat = abs(curUF-oldUF)/(abs(recordUF(1))+abs(curUF)+eps) < BI.u_ftol && ...
-                            abs(curUF-oldUF) < BI.u_ftol;
-                    end
+                    reachFlat = HasRecentObjectiveRangeBelowTol(recordUFE,recordUF,BI.UmaxImprFEs,BI.u_ftol,imprIter);
                     upperReached = targetBest || targetElite;
 
                     fprintf(['BLCMAESLSTR Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | ', ...
@@ -147,7 +143,7 @@ classdef BLCMAESLSTR < ALGORITHM
     end
 end
 
-function BI = BuildBI(Problem,uTol,lTol,uImprFEs,lImprFEs,includeLLConInUpper)
+function BI = BuildBI(Problem,uTol,lTol,includeLLConInUpper)
     BI.dim = Problem.D;
     BI.u_dim = Problem.DU;
     BI.l_dim = Problem.DL;
@@ -156,15 +152,107 @@ function BI = BuildBI(Problem,uTol,lTol,uImprFEs,lImprFEs,includeLLConInUpper)
     BI.u_ub = Problem.upper(1:Problem.DU);
     BI.l_lb = Problem.lower(Problem.DU+1:end);
     BI.l_ub = Problem.upper(Problem.DU+1:end);
-    BI.UmaxFEs = Problem.maxFE;
-    BI.LmaxFEs = Problem.maxFElower;
-    BI.UmaxImprFEs = max(1,uImprFEs);
-    BI.LmaxImprFEs = max(1,lImprFEs);
+    [UmaxFEs,LmaxFEs,UmaxImprFEs,LmaxImprFEs] = OriginalBLCMAESBudgets(Problem);
+    BI.UmaxFEs = min(Problem.maxFE,UmaxFEs);
+    BI.LmaxFEs = min(Problem.maxFElower,LmaxFEs);
+    BI.UmaxImprFEs = UmaxImprFEs;
+    BI.LmaxImprFEs = LmaxImprFEs;
     BI.u_ftol = uTol;
     BI.l_ftol = lTol;
-    BI.u_fopt = 0;
+    [BI.u_fopt,BI.l_fopt] = OriginalBLCMAESOptima(Problem);
     BI.upperConN = Problem.C;
     BI.isLowerLevelConstraintsIncludedInUpperLevel = logical(includeLLConInUpper);
+end
+
+function [UmaxFEs,LmaxFEs,UstopFEs,LstopFEs] = OriginalBLCMAESBudgets(Problem)
+    if Problem.D == 20
+        UmaxFEs = 5000;
+        UstopFEs = 750;
+        LmaxFEs = 500;
+        LstopFEs = 50;
+    elseif Problem.D == 10
+        UmaxFEs = 3500;
+        UstopFEs = 500;
+        LmaxFEs = 350;
+        LstopFEs = 35;
+    else
+        UmaxFEs = 2500;
+        UstopFEs = 350;
+        LmaxFEs = 250;
+        LstopFEs = 25;
+    end
+end
+
+function [uOpt,lOpt] = OriginalBLCMAESOptima(Problem)
+    optDec = OriginalSMDOptimumDecision(Problem);
+    if ~isempty(optDec)
+        optObj = Problem.CalObj(optDec);
+        uOpt = optObj(1);
+        lOpt = optObj(2);
+        return;
+    end
+
+    switch class(Problem)
+        case 'TP1'
+            uOpt = 225; lOpt = 100;
+        case 'TP2'
+            uOpt = 0; lOpt = 100;
+        case 'TP3'
+            uOpt = -18.6787; lOpt = -1.0156;
+        case 'TP4'
+            uOpt = -29.2; lOpt = 3.2;
+        case 'TP5'
+            uOpt = -3.6; lOpt = -2;
+        case 'TP6'
+            uOpt = -1.2098; lOpt = 7.6172;
+        case 'TP7'
+            uOpt = -1.961; lOpt = 1.961;
+        case 'TP8'
+            uOpt = 0; lOpt = 100;
+        case {'TP9','TP10'}
+            uOpt = 0; lOpt = 1;
+        otherwise
+            uOpt = nan; lOpt = nan;
+    end
+end
+
+function optDec = OriginalSMDOptimumDecision(Problem)
+    problemName = class(Problem);
+    if ~strncmp(problemName,'SMD',3)
+        optDec = [];
+        return;
+    end
+
+    r = floor(Problem.DU/2);
+    p = Problem.DU - r;
+    q = Problem.DL - r;
+    xu = zeros(1,Problem.DU);
+    xl = zeros(1,Problem.DL);
+
+    switch problemName
+        case 'SMD2'
+            xl = [zeros(1,q),ones(1,r)];
+        case 'SMD5'
+            xl = [ones(1,q),zeros(1,r)];
+        case 'SMD7'
+            xl = [zeros(1,q),ones(1,r)];
+        case 'SMD8'
+            xl = [ones(1,q),zeros(1,r)];
+        case 'SMD10'
+            a = 1/sqrt(p+r-1);
+            b = 1/sqrt(q-1);
+            xu = a*ones(1,Problem.DU);
+            xl = [b*ones(1,q),atan(a*ones(1,r))];
+        case 'SMD11'
+            xl = [zeros(1,q),exp(-1/sqrt(r))*ones(1,r)];
+        case 'SMD12'
+            a = 1/sqrt(p+r-1);
+            b = 1/sqrt(q-1);
+            xu = a*ones(1,Problem.DU);
+            xl = [b*ones(1,q),atan(a-1/sqrt(r))*ones(1,r)];
+    end
+
+    optDec = [xu,xl];
 end
 
 function POP = EmptyIndividual(N)
@@ -293,13 +381,15 @@ function [bestLX,bestLF,bestLC,bestRF,totalFElower] = LowerLevelSearch(Problem,x
 
     bestIndv = [];
     bestRF = false;
-    maxIter = ceil(BI.LmaxFEs/lambda);
     imprIter = max(1,ceil(BI.LmaxImprFEs/lambda));
-    record = zeros(1,maxIter);
+    record = [];
+    recordFE = [];
+    localFE = 0;
 
-    for iter = 1 : maxIter
-        Q = EmptyLowerIndividual(lambda);
-        for i = 1 : lambda
+    while localFE < BI.LmaxFEs
+        popN = min(lambda,BI.LmaxFEs-localFE);
+        Q = EmptyLowerIndividual(popN);
+        for i = 1 : popN
             Q(i).LX = LCMA.xmean + LCMA.sigma * randn(1,BI.l_dim) .* LCMA.D * LCMA.B';
             over = Q(i).LX > BI.l_ub;
             Q(i).LX(over) = (LCMA.xmean(over) + BI.l_ub(over))/2;
@@ -307,19 +397,24 @@ function [bestLX,bestLF,bestLC,bestRF,totalFElower] = LowerLevelSearch(Problem,x
             Q(i).LX(under) = (LCMA.xmean(under) + BI.l_lb(under))/2;
             [Q(i).LF,Q(i).LC] = EvaluateLower(Problem,xu,Q(i).LX,BI);
             totalFElower = totalFElower + 1;
+            localFE = localFE + 1;
         end
 
         Q = AssignLowerFitness(Q);
         [~,rank] = sort([Q.fit],'ascend');
         xold = LCMA.xmean;
         X = cat(1,Q.LX);
-        Y = bsxfun(@minus,X(rank(1:mu),:),xold) / LCMA.sigma;
+        useMu = min(mu,length(rank));
+        curWeights = weights(1:useMu);
+        curWeights = curWeights/sum(curWeights);
+        curMueff = sum(curWeights)^2/sum(curWeights.^2);
+        Y = bsxfun(@minus,X(rank(1:useMu),:),xold) / LCMA.sigma;
         Y = bsxfun(@times,Y,min(1,cy./sqrt(sum((Y*LCMA.invsqrtC').^2,2))));
-        deltaXmean = weights * Y;
+        deltaXmean = curWeights * Y;
         LCMA.xmean = LCMA.xmean + deltaXmean * LCMA.sigma;
-        Cmu = Y' * diag(weights) * Y;
-        LCMA.ps = (1-cs)*LCMA.ps + sqrt(cs*(2-cs)*mueff) * deltaXmean * LCMA.invsqrtC;
-        LCMA.pc = (1-cc)*LCMA.pc + sqrt(cc*(2-cc)*mueff) * deltaXmean;
+        Cmu = Y' * diag(curWeights) * Y;
+        LCMA.ps = (1-cs)*LCMA.ps + sqrt(cs*(2-cs)*curMueff) * deltaXmean * LCMA.invsqrtC;
+        LCMA.pc = (1-cc)*LCMA.pc + sqrt(cc*(2-cc)*curMueff) * deltaXmean;
         LCMA.C = (1-c1-cmu) * LCMA.C + c1 * (LCMA.pc'*LCMA.pc) + cmu * Cmu;
         deltaSigma = (cs/damps)*(norm(LCMA.ps)/chiN - 1);
         LCMA.sigma = LCMA.sigma * exp(min(CMA.delta_sigma_max,deltaSigma));
@@ -332,11 +427,10 @@ function [bestLX,bestLF,bestLC,bestRF,totalFElower] = LowerLevelSearch(Problem,x
         if LowerLevelComparator(Q(rank(1)),bestIndv)
             bestIndv = Q(rank(1));
         end
-        record(iter) = bestIndv.LF;
+        record(end+1) = bestIndv.LF; %#ok<AGROW>
+        recordFE(end+1) = localFE; %#ok<AGROW>
 
-        if (iter > imprIter && abs(record(iter)-record(iter-imprIter+1))/(abs(record(1))+abs(record(iter))+eps) < 1e-4) || ...
-                (iter > imprIter && abs(record(iter)-record(iter-imprIter+1)) < 10*BI.l_ftol) || ...
-                LCMA.sigma/sigma0 < 1e-2 || LCMA.sigma/sigma0 > 1e2
+        if HasRecentObjectiveRangeBelowTol(recordFE,record,BI.LmaxImprFEs,BI.l_ftol,imprIter)
             bestRF = true;
             break;
         end
@@ -428,6 +522,22 @@ function Model = RepairCMA(Model)
     end
 end
 
+function reached = HasRecentObjectiveRangeBelowTol(recordFE,recordObj,windowFEs,tol,minRecordN)
+    reached = false;
+    if length(recordObj) < minRecordN
+        return;
+    end
+
+    startFE = recordFE(end) - windowFEs + 1;
+    idx = recordFE >= startFE;
+    if sum(idx) < 2
+        return;
+    end
+
+    recent = recordObj(idx);
+    reached = max(recent) - min(recent) < tol;
+end
+
 function [LowerFit,lowerGap] = CalOneLowerFitness(Problem,elite)
     LowerFit = elite.LF;
     lowerGap = CalOneLowerGap(Problem,[elite.UX,elite.LX],elite.LF);
@@ -448,10 +558,14 @@ function lowerGap = CalOneLowerGap(Problem,Dec,FL)
             FLstar = sum(xu1.^3,2);
         case 'SMD8'
             FLstar = sum(abs(xu1),2);
-        case {'SMD9','SMD10'}
+        case 'SMD9'
             FLstar = sum(xu1.^2,2);
-        case {'SMD11','SMD12'}
+        case 'SMD10'
+            FLstar = sum(xu1.^2,2) + SMD10LowerOffset(Problem);
+        case 'SMD11'
             FLstar = sum(xu1.^2,2) + 1;
+        case 'SMD12'
+            FLstar = sum(xu1.^2,2) + SMD10LowerOffset(Problem) + 1;
         otherwise
             FLstar = nan;
     end
@@ -460,5 +574,14 @@ function lowerGap = CalOneLowerGap(Problem,Dec,FL)
         lowerGap = inf;
     else
         lowerGap = abs(FL - FLstar);
+    end
+end
+
+function offset = SMD10LowerOffset(Problem)
+    if Problem.q <= 1
+        offset = 0;
+    else
+        xOpt = 1/sqrt(Problem.q-1);
+        offset = Problem.q * (xOpt-2)^2;
     end
 end
