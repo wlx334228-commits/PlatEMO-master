@@ -42,7 +42,7 @@ function [action, logProb, actionMean, actionStd] = ActorForward(Actor, state)
 
     % ===== 2. forward actor network to get action mean and state-dependent std =====
     [dlActionMean, dlActionLogStd] = forward(Actor.net, dlState, Outputs={'actionMean','actionLogStd'});
-    dlActionLogStd = max(min(dlActionLogStd, -0.5), -4);
+    dlActionLogStd = max(min(dlActionLogStd - 4, -2), -6);
 
     actionMean = extractdata(dlActionMean)';         % 1 x actionDim
     actionStd = exp(extractdata(dlActionLogStd))';   % 1 x actionDim

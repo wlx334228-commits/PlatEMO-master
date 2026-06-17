@@ -60,8 +60,7 @@ function [Actor, Critic] = PPOUpdate(Actor, Critic, buffer)
             @ActorLoss, Actor.net, ...
             states, actions, oldLogProbs, advantages, clipEps, entropyCoef, ...
             single(buffer.elite_mu_targets),single(buffer.elite_sigma_targets), ...
-            Actor.DU,single(Actor.sigmaMinNorm),single(Actor.sigmaMaxNorm), ...
-            Actor.eliteLossCoef);
+            Actor.DU,Actor.eliteLossCoef);
 
         actorGradients = ClipGradientTable(actorGradients, maxGradNorm);
 
@@ -97,14 +96,13 @@ end
 % =========================================================
 function [loss, gradientsNet] = ActorLoss(net, ...
     states, actions, oldLogProbs, advantages, clipEps, entropyCoef, ...
-    eliteMuTargets,eliteSigmaTargets,DU,sigmaMinNorm,sigmaMaxNorm,eliteLossCoef)
+    eliteMuTargets,eliteSigmaTargets,DU,eliteLossCoef)
 
     % states:      T x stateDim
     % actions:     T x actionDim
     % oldLogProbs: T x 1
     % advantages:  T x 1
 
-    batchSize = size(states,1);
     % ---- convert to dlarray ----
     dlStates      = dlarray(states', "CB");          % stateDim x T
     dlActions     = dlarray(actions', "CB");         % actionDim x T
@@ -115,7 +113,7 @@ function [loss, gradientsNet] = ActorLoss(net, ...
 
     % ---- forward ----
     [dlActionMean, dlActionLogStd] = forward(net, dlStates, Outputs={'actionMean','actionLogStd'});
-    dlActionLogStd = max(min(dlActionLogStd, -0.5), -4);
+    dlActionLogStd = max(min(dlActionLogStd - 4, -2), -6);
     dlStdMat = exp(dlActionLogStd);
     dlStdMat = max(dlStdMat, 1e-6);
     dlVarMat = dlStdMat .^ 2;
@@ -138,18 +136,11 @@ function [loss, gradientsNet] = ActorLoss(net, ...
 
     ppoLoss = -mean(objective);
 
-    rawMu = dlActionMean(1:DU,:);
-    rawSigma = dlActionMean(DU+1:2*DU,:);
-    dlMuNorm = 1 ./ (1 + exp(-rawMu));
-
-    dlSigmaMin = dlarray(repmat(sigmaMinNorm(:),1,batchSize), "CB");
-    dlSigmaMax = dlarray(repmat(sigmaMaxNorm(:),1,batchSize), "CB");
-    dlSigmaNorm = dlSigmaMin + ...
-        (1 ./ (1 + exp(-rawSigma))) .* (dlSigmaMax - dlSigmaMin);
+    dlMuNorm = dlActionMean(1:DU,:);
+    dlSigmaNorm = dlActionMean(DU+1:2*DU,:);
 
     muLoss = mean((dlMuNorm - dlEliteMuTargets).^2,'all');
-    sigmaLoss = mean((log(dlSigmaNorm + 1e-12) - ...
-        log(dlEliteSigmaTargets + 1e-12)).^2,'all');
+    sigmaLoss = mean((dlSigmaNorm - dlEliteSigmaTargets).^2,'all');
     eliteLoss = muLoss + 0.5 * sigmaLoss;
 
     loss = ppoLoss + eliteLossCoef * eliteLoss;

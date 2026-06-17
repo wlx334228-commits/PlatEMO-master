@@ -6,18 +6,16 @@ classdef BLRLEA4 < ALGORITHM
         function main(Algorithm,Problem)
             %% Parameters
             ppoRatio = 0.5;
-            stateDim = 8 + 2 * Problem.DU;
+            stateDim = 2 * Problem.DU;
             actionDim = 2 * Problem.DU;
             hiddenDim = 32;
             learnRate = 1e-3;
             rolloutUpdateGap = 3;
-            imitationEpochs = 2;
+            imitationEpochs = 300;
 
             %% Networks and buffer
             Actor  = InitializeActorNetwork(stateDim,actionDim,hiddenDim,learnRate);
             Actor.DU = Problem.DU;
-            Actor.sigmaMinNorm = 1e-5 * ones(1,Problem.DU);
-            Actor.sigmaMaxNorm = 0.50 * ones(1,Problem.DU);
             Actor.eliteLossCoef = 0.30;
             Critic = InitializeCriticNetwork(stateDim,hiddenDim,learnRate);
 
@@ -63,7 +61,7 @@ classdef BLRLEA4 < ALGORITHM
                 oldBest = min(oldFit);
                 oldMean = mean(oldFit);
 
-                %% 1. State includes elite distribution descriptors
+                %% 1. State is the current elite distribution only
                 [state,eliteDist] = BuildState(Problem,Population,oldBestForState,noImproveGen);
                 Actor = SupervisedActorUpdate(Actor,state,eliteDist,imitationEpochs);
                 value = CriticForward(Critic,state);
@@ -118,7 +116,9 @@ classdef BLRLEA4 < ALGORITHM
 
                 %% 7. Build next state and store transition
                 newFit = CalFitness(Problem.C,Population);
-                newBest = min(newFit);
+                [newBest,best] = min(newFit);
+                [LowerFit,lowerGap] = CalOneLowerFitness( ...
+                    Problem,Population(best).dec,Population(best).obj,Population(best).con);
                 if newBest < oldBest - 1e-12
                     nextNoImproveGen = 0;
                 else
@@ -152,8 +152,8 @@ classdef BLRLEA4 < ALGORITHM
                 finalStats.UpperFE = Problem.FE;
                 finalStats.TotalLowerFE = totalFElower;
 
-                fprintf('BLRLEA4 Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | UpperFit=%.6e | Reward=%.3e | Match=%.3e | PPOMeanFit=%.3e\n', ...
-                    gen,Problem.FE,totalFElower,newBest,reward, ...
+                fprintf('BLRLEA4 Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | UpperFit=%.6e | LowerFit=%.6e | lowerGap=%.6e | Reward=%.3e | Match=%.3e | PPOMeanFit=%.3e\n', ...
+                    gen,Problem.FE,totalFElower,newBest,LowerFit,lowerGap,reward, ...
                     rewardStats.matchLoss,rewardStats.ppoMeanFit);
                 drawnow;
 

@@ -33,7 +33,8 @@ function Actor = InitializeActorNetwork(stateDim, actionDim, hiddenDim, learnRat
         tanhLayer(Name="tanh2")
     ];
 
-    meanHead = fullyConnectedLayer(actionDim, Name="actionMean");
+    meanHead = fullyConnectedLayer(actionDim, Name="actionMean", ...
+        WeightsInitializer="zeros", BiasInitializer="zeros");
     logStdHead = fullyConnectedLayer(actionDim, Name="actionLogStd");
 
     lgraph = layerGraph(trunk);
