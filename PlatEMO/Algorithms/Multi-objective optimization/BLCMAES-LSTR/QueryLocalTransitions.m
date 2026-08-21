@@ -1,10 +1,11 @@
 function [direction,usable,info] = QueryLocalTransitions(xBase,Archive,Problem,params,mode)
-% Query a reliable constraint-aware local transition around xBase.
+% Query a raw constraint-aware local transition around xBase.
 
     DU = Problem.DU;
     direction = zeros(1,DU);
     usable = false;
-    info = struct('alpha',0,'nNear',0,'consistency',0);
+    info = struct('alpha',0,'nNear',0,'consistency',0, ...
+        'localDist',zeros(0,1),'localD',zeros(0,DU),'weights',zeros(0,1));
 
     if nargin < 5 || isempty(mode)
         mode = 'balanced';
@@ -37,11 +38,15 @@ function [direction,usable,info] = QueryLocalTransitions(xBase,Archive,Problem,p
     localW = max(PositiveArchive.W(local),1e-12);
     weights = localW ./ (localDist + 1e-6);
     weights = weights ./ sum(weights);
+    info.localDist = localDist;
+    info.localD = localD;
+    info.weights = weights;
 
     meanD = sum(localD .* repmat(weights,1,DU),1);
     directionNorms = sqrt(sum(localD.^2,2));
     info.consistency = norm(meanD) / (sum(weights .* directionNorms) + eps);
-    if info.consistency < params.minConsistency
+    reliabilityEnabled = isfield(params,'enableIndividualReliability') && params.enableIndividualReliability;
+    if ~reliabilityEnabled && info.consistency < params.minConsistency
         return;
     end
 
@@ -54,7 +59,11 @@ function [direction,usable,info] = QueryLocalTransitions(xBase,Archive,Problem,p
     end
 
     info.alpha = baseAlpha * min(1,info.consistency);
-    usable = info.alpha > 0 && any(abs(direction) > 1e-12);
+    if reliabilityEnabled
+        usable = any(abs(direction) > 1e-12);
+    else
+        usable = info.alpha > 0 && any(abs(direction) > 1e-12);
+    end
 end
 
 function [PositiveArchive,baseAlpha] = SelectPositiveArchive(Archive,Problem,params,mode)

@@ -8,14 +8,18 @@ classdef BLCMAESLSTR < ALGORITHM
                 neighborK,reuseThreshold,directionNoise,maxStepRatio, ...
                 cvTol,objTol,frLow,frHigh,minNear,minConsistency, ...
                 stepSigmaRatio,alphaFeasibility,alphaBalanced, ...
-                alphaObjective] = ...
+                alphaObjective,enableIndividualReliability,tauR, ...
+                wd,wc,wh,betaReliability,feedbackK,feedbackPriorA, ...
+                feedbackPriorB,enableSigmaCap,kappaSigmaCap] = ...
                 Algorithm.ParameterSet(1e-6,1e-6,350,25,0,10,5, ...
                 0.25*sqrt(Problem.DU),0.00,0.20, ...
-                1e-8,1e-12,0.20,0.70,2,0.30,0.50,0.70,0.50,0.25);
+                1e-8,1e-12,0.20,0.70,2,0.30,0.50,0.70,0.50,0.25, ...
+                1,0.35,0.30,0.35,0.35,0,8,1,1,0,1.50);
 
             BI = BuildBI(Problem,uTol,lTol,includeLLConInUpper);
             CMA = InitCMAES(BI);
             Archive = InitializeTransitionArchive(Problem,max(1,round(archiveScale*Problem.N)));
+            FeedbackArchive = InitializeFeedbackArchive(Problem,max(1,round(archiveScale*Problem.N)));
             lstrParams.neighborK = neighborK;
             lstrParams.reuseThreshold = reuseThreshold;
             lstrParams.directionNoise = directionNoise;
@@ -30,6 +34,17 @@ classdef BLCMAESLSTR < ALGORITHM
             lstrParams.alphaFeasibility = alphaFeasibility;
             lstrParams.alphaBalanced = alphaBalanced;
             lstrParams.alphaObjective = alphaObjective;
+            lstrParams.enableIndividualReliability = logical(enableIndividualReliability);
+            lstrParams.tauR = tauR;
+            lstrParams.wd = wd;
+            lstrParams.wc = wc;
+            lstrParams.wh = wh;
+            lstrParams.betaReliability = betaReliability;
+            lstrParams.feedbackK = feedbackK;
+            lstrParams.feedbackPriorA = feedbackPriorA;
+            lstrParams.feedbackPriorB = feedbackPriorB;
+            lstrParams.enableSigmaCap = logical(enableSigmaCap);
+            lstrParams.kappaSigmaCap = kappaSigmaCap;
 
             maxIter = ceil(BI.UmaxFEs/CMA.lambda);
             imprIter = max(1,ceil(BI.UmaxImprFEs/CMA.lambda));
@@ -60,7 +75,8 @@ classdef BLCMAESLSTR < ALGORITHM
                         ulBaseDec(i,:) = sampledDec(i,1:BI.u_dim);
                     end
                     lstrMode = SelectLSTRMode(feasibleRate,lstrParams);
-                    [ulDec,lstrStats] = GenerateLSTROffspring(ulBaseDec,Archive,Problem,lstrParams,CMA,lstrMode);
+                    [ulDec,lstrStats,lstrLog] = GenerateLSTROffspring(ulBaseDec,Archive, ...
+                        FeedbackArchive,Problem,lstrParams,CMA,lstrMode);
 
                     POP = EmptyIndividual(popN);
                     for i = 1 : popN
@@ -104,6 +120,10 @@ classdef BLCMAESLSTR < ALGORITHM
                         [~,bestIdx] = min([POP.fit]);
                         elite = POP(bestIdx);
                     end
+                    selectedIdx = SelectedParentIndices(POP,CMA.mu);
+                    if lstrParams.enableIndividualReliability
+                        FeedbackArchive = UpdateFeedbackArchive(FeedbackArchive,lstrLog,selectedIdx,iter,lstrParams);
+                    end
 
                     currentPopulation = [POP.Solution];
                     feasibleRate = CurrentFeasibilityRate(POP,BI,lstrParams.cvTol);
@@ -128,15 +148,18 @@ classdef BLCMAESLSTR < ALGORITHM
                     upperReached = targetBest || targetElite;
 
                     [feasArchiveN,objArchiveN] = TransitionArchiveCounts(Archive);
+                    feedbackN = FeedbackArchiveSize(FeedbackArchive);
                     fprintf(['BLCMAESLSTR Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | ', ...
                         'UpperFit=%.6e | UpperOpt=%.6e | UAcc=%.6e | ', ...
                         'LowerFit=%.6e | LowerOpt=%.6e | LAcc=%.6e | ', ...
                         'lowerGap=%.6e | RF=%d | FR=%.2f | Mode=%s | ', ...
-                        'LSTR=%d/%d | Archive(F/O)=%d/%d | Sigma=%.3e\n'], ...
+                        'LSTR=%d/%d | R=%.2f/%.2f | Lambda0=%d | Clip=%d | ', ...
+                        'Archive(F/O/FB)=%d/%d/%d | Sigma=%.3e\n'], ...
                         iter,Problem.FE,totalFElower,elite.UF,BI.u_fopt,upperAcc, ...
                         lowerFit,BI.l_fopt,lowerAcc,lowerGap, ...
                         elite.RF,feasibleRate,lstrMode,lstrStats.accepted,lstrStats.total, ...
-                        feasArchiveN,objArchiveN,CMA.sigma);
+                        lstrStats.meanR,lstrStats.medianR,lstrStats.zeroLambda, ...
+                        lstrStats.sigmaClipped,feasArchiveN,objArchiveN,feedbackN,CMA.sigma);
 
                     nofinish = Algorithm.NotTerminated(currentPopulation);
 
@@ -215,6 +238,20 @@ end
 function [feasibilityN,objectiveN] = TransitionArchiveCounts(Archive)
     feasibilityN = size(Archive.Feasibility.X0,1);
     objectiveN = size(Archive.Objective.X0,1);
+end
+
+function feedbackN = FeedbackArchiveSize(FeedbackArchive)
+    feedbackN = size(FeedbackArchive.X,1);
+end
+
+function selectedIdx = SelectedParentIndices(POP,mu)
+    if isempty(POP)
+        selectedIdx = [];
+        return;
+    end
+
+    [~,rank] = sort([POP.fit],'ascend');
+    selectedIdx = rank(1:min(mu,length(rank)));
 end
 
 function [UmaxFEs,LmaxFEs,UstopFEs,LstopFEs] = OriginalBLCMAESBudgets(Problem)
