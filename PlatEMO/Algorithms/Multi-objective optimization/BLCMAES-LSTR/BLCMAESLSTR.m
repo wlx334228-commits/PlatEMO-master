@@ -5,9 +5,13 @@ classdef BLCMAESLSTR < ALGORITHM
         function main(Algorithm,Problem)
             %% Parameters
             [uTol,lTol,~,~,includeLLConInUpper,archiveScale, ...
-                neighborK,reuseThreshold,directionNoise,maxStepRatio] = ...
+                neighborK,reuseThreshold,directionNoise,maxStepRatio, ...
+                cvTol,objTol,frLow,frHigh,minNear,minConsistency, ...
+                stepSigmaRatio,alphaFeasibility,alphaBalanced, ...
+                alphaObjective] = ...
                 Algorithm.ParameterSet(1e-6,1e-6,350,25,0,10,5, ...
-                0.25*sqrt(Problem.DU),0.20,0.20);
+                0.25*sqrt(Problem.DU),0.00,0.20, ...
+                1e-8,1e-12,0.20,0.70,2,0.30,0.50,0.70,0.50,0.25);
 
             BI = BuildBI(Problem,uTol,lTol,includeLLConInUpper);
             CMA = InitCMAES(BI);
@@ -16,12 +20,23 @@ classdef BLCMAESLSTR < ALGORITHM
             lstrParams.reuseThreshold = reuseThreshold;
             lstrParams.directionNoise = directionNoise;
             lstrParams.maxStepRatio = maxStepRatio;
+            lstrParams.cvTol = cvTol;
+            lstrParams.objTol = objTol;
+            lstrParams.frLow = frLow;
+            lstrParams.frHigh = frHigh;
+            lstrParams.minNear = minNear;
+            lstrParams.minConsistency = minConsistency;
+            lstrParams.stepSigmaRatio = stepSigmaRatio;
+            lstrParams.alphaFeasibility = alphaFeasibility;
+            lstrParams.alphaBalanced = alphaBalanced;
+            lstrParams.alphaObjective = alphaObjective;
 
             maxIter = ceil(BI.UmaxFEs/CMA.lambda);
             imprIter = max(1,ceil(BI.UmaxImprFEs/CMA.lambda));
 
             elite = [];
             previousPopulation = [];
+            feasibleRate = 0;
             recordUF = [];
             recordUFE = [];
             totalFElower = 0;
@@ -44,7 +59,8 @@ classdef BLCMAESLSTR < ALGORITHM
                         sampledDec(i,:) = SampleFullVector(CMA,BI);
                         ulBaseDec(i,:) = sampledDec(i,1:BI.u_dim);
                     end
-                    ulDec = GenerateLSTROffspring(ulBaseDec,Archive,Problem,lstrParams);
+                    lstrMode = SelectLSTRMode(feasibleRate,lstrParams);
+                    [ulDec,lstrStats] = GenerateLSTROffspring(ulBaseDec,Archive,Problem,lstrParams,CMA,lstrMode);
 
                     POP = EmptyIndividual(popN);
                     for i = 1 : popN
@@ -90,8 +106,9 @@ classdef BLCMAESLSTR < ALGORITHM
                     end
 
                     currentPopulation = [POP.Solution];
+                    feasibleRate = CurrentFeasibilityRate(POP,BI,lstrParams.cvTol);
                     if ~isempty(previousPopulation)
-                        Archive = UpdateTransitionArchive(Problem,Archive,previousPopulation,currentPopulation);
+                        Archive = UpdateTransitionArchive(Problem,Archive,previousPopulation,currentPopulation,BI,lstrParams);
                     end
                     previousPopulation = currentPopulation;
 
@@ -110,13 +127,16 @@ classdef BLCMAESLSTR < ALGORITHM
                     reachFlat = HasRecentObjectiveRangeBelowTol(recordUFE,recordUF,BI.UmaxImprFEs,BI.u_ftol,imprIter);
                     upperReached = targetBest || targetElite;
 
+                    [feasArchiveN,objArchiveN] = TransitionArchiveCounts(Archive);
                     fprintf(['BLCMAESLSTR Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | ', ...
                         'UpperFit=%.6e | UpperOpt=%.6e | UAcc=%.6e | ', ...
                         'LowerFit=%.6e | LowerOpt=%.6e | LAcc=%.6e | ', ...
-                        'lowerGap=%.6e | RF=%d | Archive=%d | Sigma=%.3e\n'], ...
+                        'lowerGap=%.6e | RF=%d | FR=%.2f | Mode=%s | ', ...
+                        'LSTR=%d/%d | Archive(F/O)=%d/%d | Sigma=%.3e\n'], ...
                         iter,Problem.FE,totalFElower,elite.UF,BI.u_fopt,upperAcc, ...
                         lowerFit,BI.l_fopt,lowerAcc,lowerGap, ...
-                        elite.RF,size(Archive.X0,1),CMA.sigma);
+                        elite.RF,feasibleRate,lstrMode,lstrStats.accepted,lstrStats.total, ...
+                        feasArchiveN,objArchiveN,CMA.sigma);
 
                     nofinish = Algorithm.NotTerminated(currentPopulation);
 
@@ -167,6 +187,34 @@ function BI = BuildBI(Problem,uTol,lTol,includeLLConInUpper)
     [BI.u_fopt,BI.l_fopt] = OriginalBLCMAESOptima(Problem);
     BI.upperConN = Problem.C;
     BI.isLowerLevelConstraintsIncludedInUpperLevel = logical(includeLLConInUpper);
+end
+
+function mode = SelectLSTRMode(feasibleRate,params)
+    if feasibleRate < params.frLow
+        mode = 'feasibility';
+    elseif feasibleRate < params.frHigh
+        mode = 'balanced';
+    else
+        mode = 'objective';
+    end
+end
+
+function feasibleRate = CurrentFeasibilityRate(POP,BI,cvTol)
+    if isempty(POP)
+        feasibleRate = 0;
+        return;
+    end
+
+    CV = [POP.UC];
+    if ~BI.isLowerLevelConstraintsIncludedInUpperLevel
+        CV = CV + [POP.LC];
+    end
+    feasibleRate = sum(CV <= cvTol) / numel(CV);
+end
+
+function [feasibilityN,objectiveN] = TransitionArchiveCounts(Archive)
+    feasibilityN = size(Archive.Feasibility.X0,1);
+    objectiveN = size(Archive.Objective.X0,1);
 end
 
 function [UmaxFEs,LmaxFEs,UstopFEs,LstopFEs] = OriginalBLCMAESBudgets(Problem)
