@@ -47,13 +47,10 @@ classdef BLCMAESLSTR < ALGORITHM
             lstrParams.kappaSigmaCap = kappaSigmaCap;
 
             maxIter = ceil(BI.UmaxFEs/CMA.lambda);
-            imprIter = max(1,ceil(BI.UmaxImprFEs/CMA.lambda));
 
             elite = [];
             previousPopulation = [];
             feasibleRate = 0;
-            recordUF = [];
-            recordUFE = [];
             totalFElower = 0;
             upperReached = false;
             runRecordWritten = false;
@@ -134,18 +131,12 @@ classdef BLCMAESLSTR < ALGORITHM
 
                     elite.UFEs = Problem.FE;
                     elite.LFEs = totalFElower;
-                    recordUF(end+1) = elite.UF; %#ok<AGROW>
-                    recordUFE(end+1) = Problem.FE; %#ok<AGROW>
 
                     %% Termination check
                     [lowerFit,lowerGap] = CalOneLowerFitness(Problem,elite);
-                    targetBest = isfinite(BI.u_fopt) && abs(bestIndv.UF - BI.u_fopt) < BI.u_ftol;
-                    targetElite = isfinite(BI.u_fopt) && abs(elite.UF - BI.u_fopt) < BI.u_ftol;
                     upperAcc = abs(elite.UF - BI.u_fopt);
                     lowerAcc = abs(lowerFit - BI.l_fopt);
                     reachMaxFEs = Problem.FE >= BI.UmaxFEs;
-                    reachFlat = HasRecentObjectiveRangeBelowTol(recordUFE,recordUF,BI.UmaxImprFEs,BI.u_ftol,imprIter);
-                    upperReached = targetBest || targetElite;
 
                     [feasArchiveN,objArchiveN] = TransitionArchiveCounts(Archive);
                     feedbackN = FeedbackArchiveSize(FeedbackArchive);
@@ -163,10 +154,7 @@ classdef BLCMAESLSTR < ALGORITHM
 
                     nofinish = Algorithm.NotTerminated(currentPopulation);
 
-                    if targetBest
-                        elite = bestIndv;
-                    end
-                    if upperReached || reachMaxFEs || reachFlat || ~nofinish
+                    if reachMaxFEs || ~nofinish
                         break;
                     end
 
@@ -471,9 +459,6 @@ function [bestLX,bestLF,bestLC,bestRF,totalFElower] = LowerLevelSearch(Problem,x
 
     bestIndv = [];
     bestRF = false;
-    imprIter = max(1,ceil(BI.LmaxImprFEs/lambda));
-    record = [];
-    recordFE = [];
     localFE = 0;
 
     while localFE < BI.LmaxFEs
@@ -516,13 +501,6 @@ function [bestLX,bestLF,bestLC,bestRF,totalFElower] = LowerLevelSearch(Problem,x
 
         if LowerLevelComparator(Q(rank(1)),bestIndv)
             bestIndv = Q(rank(1));
-        end
-        record(end+1) = bestIndv.LF; %#ok<AGROW>
-        recordFE(end+1) = localFE; %#ok<AGROW>
-
-        if HasRecentObjectiveRangeBelowTol(recordFE,record,BI.LmaxImprFEs,BI.l_ftol,imprIter)
-            bestRF = true;
-            break;
         end
     end
 
@@ -610,22 +588,6 @@ function Model = RepairCMA(Model)
         Model.pc = Model.pc * fac;
         Model.C = Model.C * fac^2;
     end
-end
-
-function reached = HasRecentObjectiveRangeBelowTol(recordFE,recordObj,windowFEs,tol,minRecordN)
-    reached = false;
-    if length(recordObj) < minRecordN
-        return;
-    end
-
-    startFE = recordFE(end) - windowFEs + 1;
-    idx = recordFE >= startFE;
-    if sum(idx) < 2
-        return;
-    end
-
-    recent = recordObj(idx);
-    reached = max(recent) - min(recent) < tol;
 end
 
 function [LowerFit,lowerGap] = CalOneLowerFitness(Problem,elite)
