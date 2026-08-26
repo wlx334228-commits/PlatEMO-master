@@ -10,11 +10,8 @@ classdef BLCMAESLSTR_NoLSTR < ALGORITHM
             BI = BuildBI(Problem,uTol,lTol,includeLLConInUpper);
             CMA = InitCMAES(BI);
             maxIter = ceil(BI.UmaxFEs/CMA.lambda);
-            imprIter = max(1,ceil(BI.UmaxImprFEs/CMA.lambda));
 
             elite = [];
-            recordUF = [];
-            recordUFE = [];
             totalFElower = 0;
             upperReached = false;
             runRecordWritten = false;
@@ -75,8 +72,6 @@ classdef BLCMAESLSTR_NoLSTR < ALGORITHM
 
                     elite.UFEs = Problem.FE;
                     elite.LFEs = totalFElower;
-                    recordUF(end+1) = elite.UF; %#ok<AGROW>
-                    recordUFE(end+1) = Problem.FE; %#ok<AGROW>
 
                     %% Termination check
                     [lowerFit,lowerGap] = CalOneLowerFitness(Problem,elite);
@@ -85,7 +80,6 @@ classdef BLCMAESLSTR_NoLSTR < ALGORITHM
                     upperAcc = abs(elite.UF - BI.u_fopt);
                     lowerAcc = abs(lowerFit - BI.l_fopt);
                     reachMaxFEs = Problem.FE >= BI.UmaxFEs;
-                    reachFlat = HasRecentObjectiveRangeBelowTol(recordUFE,recordUF,BI.UmaxImprFEs,BI.u_ftol,imprIter);
                     upperReached = targetBest || targetElite;
 
                     fprintf(['BL-CMA-ES Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | ', ...
@@ -101,7 +95,7 @@ classdef BLCMAESLSTR_NoLSTR < ALGORITHM
                     if targetBest
                         elite = bestIndv;
                     end
-                    if upperReached || reachMaxFEs || reachFlat || ~nofinish
+                    if upperReached || reachMaxFEs || ~nofinish
                         break;
                     end
 
