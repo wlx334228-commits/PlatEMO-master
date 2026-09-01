@@ -3,25 +3,39 @@ classdef BLCMAESLSTR < ALGORITHM
     % PlatEMO implementation of BL-CMA-ES with local successful transition reuse.
     methods
         function main(Algorithm,Problem)
+            addpath(fileparts(mfilename('fullpath')));
+
             %% Parameters
             [uTol,lTol,~,~,includeLLConInUpper,archiveScale, ...
-                neighborK,reuseThreshold,directionNoise,maxStepRatio, ...
+                neighborK,legacyReuseThreshold,directionNoise,maxStepRatio, ...
                 cvTol,objTol,frLow,frHigh,minNear,minConsistency, ...
                 stepSigmaRatio,alphaFeasibility,alphaBalanced, ...
                 alphaObjective,enableIndividualReliability,tauR, ...
                 wd,wc,wh,betaReliability,feedbackK,feedbackPriorA, ...
-                feedbackPriorB,enableSigmaCap,kappaSigmaCap] = ...
+                feedbackPriorB,enableSigmaCap,kappaSigmaCap, ...
+                historyWindow,archiveThreshold,reuseThreshold, ...
+                minHistoricalImprovement,Kuse,Mref,debugRecord] = ...
                 Algorithm.ParameterSet(1e-6,1e-6,350,25,0,10,5, ...
-                0.25*sqrt(Problem.DU),0.00,0.20, ...
-                1e-8,1e-12,0.20,0.70,2,0.30,0.50,0.70,0.50,0.25, ...
-                1,0.35,0.30,0.35,0.35,0,8,1,1,0,1.50);
+                0.06,0.00,0.20, ...
+                1e-8,1e-12,0.20,0.70,1,0.30,0.50,0.70,0.50,0.25, ...
+                1,0.25,0.30,0.35,0.35,0,8,1,1,0,1.50, ...
+                4,0.10,0.06,1e-8,5,3,1);
 
             BI = BuildBI(Problem,uTol,lTol,includeLLConInUpper);
             CMA = InitCMAES(BI);
             Archive = InitializeTransitionArchive(Problem,max(1,round(archiveScale*Problem.N)));
             FeedbackArchive = InitializeFeedbackArchive(Problem,max(1,round(archiveScale*Problem.N)));
+            HistoryWindow = InitializeEvaluatedHistoryWindow(Problem,historyWindow);
             lstrParams.neighborK = neighborK;
+            lstrParams.legacyReuseThreshold = legacyReuseThreshold;
             lstrParams.reuseThreshold = reuseThreshold;
+            lstrParams.historyWindow = max(1,round(historyWindow));
+            lstrParams.archiveThreshold = archiveThreshold;
+            lstrParams.archiveRadius = archiveThreshold;
+            lstrParams.reuseRadius = reuseThreshold;
+            lstrParams.minHistoricalImprovement = minHistoricalImprovement;
+            lstrParams.Kuse = Kuse;
+            lstrParams.Mref = Mref;
             lstrParams.directionNoise = directionNoise;
             lstrParams.maxStepRatio = maxStepRatio;
             lstrParams.cvTol = cvTol;
@@ -36,6 +50,7 @@ classdef BLCMAESLSTR < ALGORITHM
             lstrParams.alphaObjective = alphaObjective;
             lstrParams.enableIndividualReliability = logical(enableIndividualReliability);
             lstrParams.tauR = tauR;
+            lstrParams.reliabilityThreshold = tauR;
             lstrParams.wd = wd;
             lstrParams.wc = wc;
             lstrParams.wh = wh;
@@ -45,11 +60,11 @@ classdef BLCMAESLSTR < ALGORITHM
             lstrParams.feedbackPriorB = feedbackPriorB;
             lstrParams.enableSigmaCap = logical(enableSigmaCap);
             lstrParams.kappaSigmaCap = kappaSigmaCap;
+            lstrParams.debugRecord = logical(debugRecord);
 
             maxIter = ceil(BI.UmaxFEs/CMA.lambda);
 
             elite = [];
-            previousPopulation = [];
             feasibleRate = 0;
             totalFElower = 0;
             upperReached = false;
@@ -122,12 +137,13 @@ classdef BLCMAESLSTR < ALGORITHM
                         FeedbackArchive = UpdateFeedbackArchive(FeedbackArchive,lstrLog,selectedIdx,iter,lstrParams);
                     end
 
+                    CurrentRecords = PopulationToHistoryRecords(POP,BI,lstrParams.cvTol,iter);
+                    [Archive,newKnowledgeN] = UpdateTransitionArchive(Problem,Archive,HistoryWindow, ...
+                        CurrentRecords,BI,lstrParams,lstrMode,iter);
+                    HistoryWindow = UpdateEvaluatedHistoryWindow(HistoryWindow,CurrentRecords,lstrParams.historyWindow);
+                    historyWindowN = size(HistoryWindow.X,1);
                     currentPopulation = [POP.Solution];
                     feasibleRate = CurrentFeasibilityRate(POP,BI,lstrParams.cvTol);
-                    if ~isempty(previousPopulation)
-                        Archive = UpdateTransitionArchive(Problem,Archive,previousPopulation,currentPopulation,BI,lstrParams);
-                    end
-                    previousPopulation = currentPopulation;
 
                     elite.UFEs = Problem.FE;
                     elite.LFEs = totalFElower;
@@ -141,19 +157,26 @@ classdef BLCMAESLSTR < ALGORITHM
                     reachMaxFEs = Problem.FE >= BI.UmaxFEs;
                     upperReached = targetBest || targetElite;
 
-                    [feasArchiveN,objArchiveN] = TransitionArchiveCounts(Archive);
+                    [feasArchiveN,balancedArchiveN,objArchiveN] = TransitionArchiveCounts(Archive);
                     feedbackN = FeedbackArchiveSize(FeedbackArchive);
                     fprintf(['BLCMAESLSTR Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | ', ...
                         'UpperFit=%.6e | UpperOpt=%.6e | UAcc=%.6e | ', ...
                         'LowerFit=%.6e | LowerOpt=%.6e | LAcc=%.6e | ', ...
                         'lowerGap=%.6e | RF=%d | FR=%.2f | Mode=%s | ', ...
                         'LSTR=%d/%d | R=%.2f/%.2f | Lambda0=%d | Clip=%d | ', ...
-                        'Archive(F/O/FB)=%d/%d/%d | Sigma=%.3e\n'], ...
+                        'Archive(F/B/O/FB)=%d/%d/%d/%d | Win=%d | NewK=%d | Sigma=%.3e\n'], ...
                         iter,Problem.FE,totalFElower,elite.UF,BI.u_fopt,upperAcc, ...
                         lowerFit,BI.l_fopt,lowerAcc,lowerGap, ...
                         elite.RF,feasibleRate,lstrMode,lstrStats.accepted,lstrStats.total, ...
                         lstrStats.meanR,lstrStats.medianR,lstrStats.zeroLambda, ...
-                        lstrStats.sigmaClipped,feasArchiveN,objArchiveN,feedbackN,CMA.sigma);
+                        lstrStats.sigmaClipped,feasArchiveN,balancedArchiveN,objArchiveN, ...
+                        feedbackN,historyWindowN,newKnowledgeN,CMA.sigma);
+                    if lstrParams.debugRecord
+                        AppendBLCMAESLSTRDebugRecord(Problem,iter,Problem.FE,totalFElower, ...
+                            lstrMode,feasibleRate,historyWindowN,newKnowledgeN,Archive, ...
+                            FeedbackArchive,lstrStats);
+                        AppendBLCMAESLSTRIndividualDebugRecord(Problem,iter,lstrMode,lstrLog);
+                    end
 
                     nofinish = Algorithm.NotTerminated(currentPopulation);
 
@@ -229,8 +252,74 @@ function feasibleRate = CurrentFeasibilityRate(POP,BI,cvTol)
     feasibleRate = sum(CV <= cvTol) / numel(CV);
 end
 
-function [feasibilityN,objectiveN] = TransitionArchiveCounts(Archive)
+function HistoryWindow = InitializeEvaluatedHistoryWindow(Problem,maxGenerations)
+    HistoryWindow.X = zeros(0,Problem.DU);
+    HistoryWindow.F = zeros(0,1);
+    HistoryWindow.CV = zeros(0,1);
+    HistoryWindow.Fit = zeros(0,1);
+    HistoryWindow.Feasible = false(0,1);
+    HistoryWindow.RF = false(0,1);
+    HistoryWindow.Gen = zeros(0,1);
+    HistoryWindow.MaxGenerations = max(1,round(maxGenerations));
+end
+
+function Records = PopulationToHistoryRecords(POP,BI,cvTol,gen)
+    if isempty(POP)
+        Records.X = zeros(0,BI.u_dim);
+        Records.F = zeros(0,1);
+        Records.CV = zeros(0,1);
+        Records.Fit = zeros(0,1);
+        Records.Feasible = false(0,1);
+        Records.RF = false(0,1);
+        Records.Gen = zeros(0,1);
+        return;
+    end
+
+    Records.X = cat(1,POP.UX);
+    Records.F = [POP.UF]';
+    CV = [POP.UC]';
+    if ~BI.isLowerLevelConstraintsIncludedInUpperLevel
+        CV = CV + [POP.LC]';
+    end
+    Records.CV = CV;
+    Records.Fit = [POP.fit]';
+    Records.Feasible = CV <= cvTol;
+    Records.RF = [POP.RF]';
+    Records.Gen = gen * ones(length(POP),1);
+end
+
+function HistoryWindow = UpdateEvaluatedHistoryWindow(HistoryWindow,Records,maxGenerations)
+    if isempty(Records.X)
+        return;
+    end
+
+    HistoryWindow.X = [HistoryWindow.X;Records.X];
+    HistoryWindow.F = [HistoryWindow.F;Records.F];
+    HistoryWindow.CV = [HistoryWindow.CV;Records.CV];
+    HistoryWindow.Fit = [HistoryWindow.Fit;Records.Fit];
+    HistoryWindow.Feasible = [HistoryWindow.Feasible;Records.Feasible];
+    HistoryWindow.RF = [HistoryWindow.RF;Records.RF];
+    HistoryWindow.Gen = [HistoryWindow.Gen;Records.Gen];
+    HistoryWindow.MaxGenerations = max(1,round(maxGenerations));
+
+    minGen = Records.Gen(end) - HistoryWindow.MaxGenerations + 1;
+    keep = HistoryWindow.Gen >= minGen;
+    HistoryWindow.X = HistoryWindow.X(keep,:);
+    HistoryWindow.F = HistoryWindow.F(keep,:);
+    HistoryWindow.CV = HistoryWindow.CV(keep,:);
+    HistoryWindow.Fit = HistoryWindow.Fit(keep,:);
+    HistoryWindow.Feasible = HistoryWindow.Feasible(keep,:);
+    HistoryWindow.RF = HistoryWindow.RF(keep,:);
+    HistoryWindow.Gen = HistoryWindow.Gen(keep,:);
+end
+
+function [feasibilityN,balancedN,objectiveN] = TransitionArchiveCounts(Archive)
     feasibilityN = size(Archive.Feasibility.X0,1);
+    if isfield(Archive,'Balanced')
+        balancedN = size(Archive.Balanced.X0,1);
+    else
+        balancedN = 0;
+    end
     objectiveN = size(Archive.Objective.X0,1);
 end
 
@@ -523,7 +612,6 @@ function [bestLX,bestLF,bestLC,bestRF,totalFElower] = LowerLevelSearch(Problem,x
     bestLX = bestIndv.LX;
     bestLF = bestIndv.LF;
     bestLC = bestIndv.LC;
-    bestRF = bestRF;
 end
 
 function Q = EmptyLowerIndividual(N)
@@ -555,7 +643,7 @@ function CMA = InitCMAES(BI)
     CMA.delta_sigma_max = 1;
 end
 
-function CMA = UpdateCMAESFromPOP(CMA,POP,BI)
+function CMA = UpdateCMAESFromPOP(CMA,POP,~)
     [~,rank] = sort([POP.fit],'ascend');
     useMu = min(CMA.mu,length(rank));
     weights = CMA.weights(1:useMu);

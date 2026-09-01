@@ -29,6 +29,15 @@ function [ulOffDec,stats,genLog] = GenerateLSTROffspring(ulBaseDec,Archive,Feedb
         [dRaw,usable,info] = QueryLocalTransitions(xBase,Archive,Problem,params,mode);
         genLog(i).Usable = usable;
         genLog(i).NNear = info.nNear;
+        genLog(i).CandidateAll = info.candidateAll;
+        genLog(i).CandidateDistance = info.candidateDistance;
+        genLog(i).CandidateImprovement = info.candidateImprovement;
+        genLog(i).CandidateNDS = info.candidateNDS;
+        genLog(i).UsedN = info.usedN;
+        genLog(i).M = info.usedN;
+        genLog(i).MeanDNew = info.meanDist;
+        genLog(i).MeanDist = info.meanDist;
+        genLog(i).MeanImprovement = info.meanImprovement;
         genLog(i).Consistency = info.consistency;
         genLog(i).DRawNorm = norm(dRaw);
 
@@ -41,7 +50,9 @@ function [ulOffDec,stats,genLog] = GenerateLSTROffspring(ulBaseDec,Archive,Feedb
 
                 genLog(i).Rdist = reliability.Rdist;
                 genLog(i).Rdir = reliability.Rdir;
-                genLog(i).Rhist = reliability.Rhist;
+                genLog(i).Rnum = reliability.Rnum;
+                genLog(i).MeanDist = reliability.meanDist;
+                genLog(i).M = reliability.M;
                 genLog(i).R = reliability.R;
                 genLog(i).Lambda = reliability.lambda;
                 genLog(i).DeltaRawNorm = norm(stepRaw);
@@ -89,19 +100,50 @@ end
 
 function stats = EmptyLSTRStats()
     stats = struct('accepted',0,'total',0,'usable',0,'meanAlpha',0, ...
-        'meanR',0,'medianR',0,'meanLambda',0,'zeroLambda',0,'sigmaClipped',0);
+        'meanR',0,'medianR',0,'meanLambda',0,'zeroLambda',0,'sigmaClipped',0, ...
+        'meanCandidateAll',0,'meanCandidateDistance',0,'meanCandidateImprovement',0, ...
+        'meanCandidateNDS',0,'meanUsedN',0,'meanDNew',0,'meanImprovement',0, ...
+        'meanM',0,'meanDist',0,'meanRdist',0,'meanRdir',0,'meanRnum',0, ...
+        'meanDRawNorm',0,'meanLambdaDRawNorm',0,'meanDeltaFinalNorm',0, ...
+        'noCorrectionRatio',0);
 end
 
 function genLog = EmptyGenerationLog(N,DU,mode)
     entry = struct('X',zeros(1,DU),'ModeCode',LSTRModeCode(mode), ...
-        'Usable',false,'Applied',false,'NNear',0,'Consistency',0, ...
-        'DRawNorm',0,'Rdist',0,'Rdir',0,'Rhist',0,'R',0,'Lambda',0, ...
+        'Usable',false,'Applied',false,'NNear',0, ...
+        'CandidateAll',0,'CandidateDistance',0,'CandidateImprovement',0, ...
+        'CandidateNDS',0,'UsedN',0,'MeanDNew',0,'MeanImprovement',0, ...
+        'M',0,'MeanDist',0,'Consistency',0, ...
+        'DRawNorm',0,'Rdist',0,'Rdir',0,'Rnum',0,'R',0,'Lambda',0, ...
         'DeltaRawNorm',0,'DeltaFinalNorm',0,'SigmaClipped',false);
     genLog = repmat(entry,1,N);
 end
 
 function stats = SummarizeReliabilityStats(stats,genLog,params)
-    if ~params.enableIndividualReliability || isempty(genLog)
+    if isempty(genLog)
+        return;
+    end
+
+    total = max(1,numel(genLog));
+    stats.meanCandidateAll = mean([genLog.CandidateAll]);
+    stats.meanCandidateDistance = mean([genLog.CandidateDistance]);
+    stats.meanCandidateImprovement = mean([genLog.CandidateImprovement]);
+    stats.meanCandidateNDS = mean([genLog.CandidateNDS]);
+    stats.meanUsedN = mean([genLog.UsedN]);
+    stats.meanM = mean([genLog.M]);
+    stats.meanDRawNorm = mean([genLog.DRawNorm]);
+    stats.meanLambdaDRawNorm = mean([genLog.DeltaRawNorm]);
+    stats.meanDeltaFinalNorm = mean([genLog.DeltaFinalNorm]);
+    stats.noCorrectionRatio = 1 - stats.accepted / total;
+
+    used = [genLog.UsedN] > 0;
+    if any(used)
+        stats.meanDNew = mean([genLog(used).MeanDNew]);
+        stats.meanDist = mean([genLog(used).MeanDist]);
+        stats.meanImprovement = mean([genLog(used).MeanImprovement]);
+    end
+
+    if ~params.enableIndividualReliability
         return;
     end
 
@@ -112,6 +154,9 @@ function stats = SummarizeReliabilityStats(stats,genLog,params)
 
     R = [genLog(usable).R];
     Lambda = [genLog(usable).Lambda];
+    stats.meanRdist = mean([genLog(usable).Rdist]);
+    stats.meanRdir = mean([genLog(usable).Rdir]);
+    stats.meanRnum = mean([genLog(usable).Rnum]);
     stats.meanR = mean(R);
     stats.medianR = median(R);
     stats.meanLambda = mean(Lambda);
