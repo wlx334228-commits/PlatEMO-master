@@ -70,6 +70,9 @@ classdef BLCMAESLSTR < ALGORITHM
             upperReached = false;
             runRecordWritten = false;
             gen = 0;
+            upperRecord = [];
+            upperRecordFE = [];
+            upperImprIter = max(1,ceil(BI.UmaxImprFEs/CMA.lambda));
 
             try
                 for iter = 1 : maxIter
@@ -156,6 +159,10 @@ classdef BLCMAESLSTR < ALGORITHM
                     lowerAcc = abs(lowerFit - BI.l_fopt);
                     reachMaxFEs = Problem.FE >= BI.UmaxFEs;
                     upperReached = targetBest || targetElite;
+                    upperRecord(end+1) = elite.UF; %#ok<AGROW>
+                    upperRecordFE(end+1) = Problem.FE; %#ok<AGROW>
+                    upperWindowReached = HasRecentObjectiveRangeBelowTol(upperRecordFE, ...
+                        upperRecord,BI.UmaxImprFEs,BI.u_ftol,upperImprIter);
 
                     [feasArchiveN,balancedArchiveN,objArchiveN] = TransitionArchiveCounts(Archive);
                     feedbackN = FeedbackArchiveSize(FeedbackArchive);
@@ -183,7 +190,7 @@ classdef BLCMAESLSTR < ALGORITHM
                     if targetBest
                         elite = bestIndv;
                     end
-                    if upperReached || reachMaxFEs || ~nofinish
+                    if upperWindowReached || upperReached || reachMaxFEs || ~nofinish
                         break;
                     end
 

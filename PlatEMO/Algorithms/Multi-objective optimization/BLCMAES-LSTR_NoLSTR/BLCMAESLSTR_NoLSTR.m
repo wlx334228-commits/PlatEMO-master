@@ -16,6 +16,9 @@ classdef BLCMAESLSTR_NoLSTR < ALGORITHM
             upperReached = false;
             runRecordWritten = false;
             gen = 0;
+            upperRecord = [];
+            upperRecordFE = [];
+            upperImprIter = max(1,ceil(BI.UmaxImprFEs/CMA.lambda));
 
             try
                 for iter = 1 : maxIter
@@ -81,6 +84,10 @@ classdef BLCMAESLSTR_NoLSTR < ALGORITHM
                     lowerAcc = abs(lowerFit - BI.l_fopt);
                     reachMaxFEs = Problem.FE >= BI.UmaxFEs;
                     upperReached = targetBest || targetElite;
+                    upperRecord(end+1) = elite.UF; %#ok<AGROW>
+                    upperRecordFE(end+1) = Problem.FE; %#ok<AGROW>
+                    upperWindowReached = HasRecentObjectiveRangeBelowTol(upperRecordFE, ...
+                        upperRecord,BI.UmaxImprFEs,BI.u_ftol,upperImprIter);
 
                     fprintf(['BL-CMA-ES Gen=%4d | UpperFE=%6d | TotalLowerFE=%10d | ', ...
                         'UpperFit=%.6e | UpperOpt=%.6e | UAcc=%.6e | ', ...
@@ -95,7 +102,7 @@ classdef BLCMAESLSTR_NoLSTR < ALGORITHM
                     if targetBest
                         elite = bestIndv;
                     end
-                    if upperReached || reachMaxFEs || ~nofinish
+                    if upperWindowReached || upperReached || reachMaxFEs || ~nofinish
                         break;
                     end
 
@@ -416,7 +423,6 @@ function [bestLX,bestLF,bestLC,bestRF,totalFElower] = LowerLevelSearch(Problem,x
     bestLX = bestIndv.LX;
     bestLF = bestIndv.LF;
     bestLC = bestIndv.LC;
-    bestRF = bestRF;
 end
 
 function Q = EmptyLowerIndividual(N)
@@ -448,7 +454,7 @@ function CMA = InitCMAES(BI)
     CMA.delta_sigma_max = 1;
 end
 
-function CMA = UpdateCMAESFromPOP(CMA,POP,BI)
+function CMA = UpdateCMAESFromPOP(CMA,POP,~)
     [~,rank] = sort([POP.fit],'ascend');
     useMu = min(CMA.mu,length(rank));
     weights = CMA.weights(1:useMu);
